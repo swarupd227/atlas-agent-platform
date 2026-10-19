@@ -356,3 +356,58 @@ describe("what a step is told about extent", () => {
     expect(line).not.toContain("PARTIAL");
   });
 });
+
+/**
+ * The descriptor must answer "is this the whole document?", not "did the
+ * extractor hit its ceiling?" -- two different events that used to share one
+ * field. Measured on the deployed app before this fix: a 359,214-character
+ * schedule reached a step as its first 120,000 characters with
+ * `truncated: false` in state, while the prompt said so in words. A routing
+ * rule reads the field, not the prose.
+ */
+describe("truncation the step actually experiences", () => {
+  const long = (n: number) => file({ id: "f-long", filename: "big_schedule.txt", extractedText: "x".repeat(n) });
+
+  it("is truncated when the text is longer than one step may be handed", async () => {
+    state.files.set("f-long", long(359_214));
+    const { documents } = await resolveRunDocuments(["f-long"], "org-1");
+    const d = documents[0];
+    expect(d.chars).toBe(359_214);
+    expect(d.charsShown).toBe(120_000);
+    expect(d.truncated).toBe(true);
+    expect(d.note).toContain("first 120,000 of 359,214 characters");
+    expect(d.note).toContain("do not conclude it is absent");
+  });
+
+  it("is not truncated when the whole document fits", async () => {
+    state.files.set("f-long", long(119_999));
+    const { documents } = await resolveRunDocuments(["f-long"], "org-1");
+    expect(documents[0].truncated).toBe(false);
+    expect(documents[0].charsShown).toBeUndefined();
+    expect(documents[0].note).toBeUndefined();
+  });
+
+  it("exactly at the cap is not truncated", async () => {
+    state.files.set("f-long", long(120_000));
+    const { documents } = await resolveRunDocuments(["f-long"], "org-1");
+    expect(documents[0].truncated).toBe(false);
+    expect(documents[0].charsShown).toBeUndefined();
+  });
+
+  it("says so when the reader stopped short AND the step cap also bit", async () => {
+    state.files.set("f-long", file({ id: "f-long", filename: "big.pdf", kind: "pdf", extractedText: "y".repeat(200_000), extractMeta: { truncated: true, pages: 400 } }));
+    const { documents } = await resolveRunDocuments(["f-long"], "org-1");
+    expect(documents[0].truncated).toBe(true);
+    expect(documents[0].note).toContain("the reader had already stopped short");
+  });
+
+  it("tells the step what arrived against what exists", async () => {
+    state.files.set("f-long", long(359_214));
+    const { documents } = await resolveRunDocuments(["f-long"], "org-1");
+    const context = await buildRunDocumentContext(documents, "org-1");
+    expect(context).toContain("120,000 of 359,214 characters shown");
+    expect(context).toContain("PARTIAL");
+    // and never the old line that contradicted the prompt
+    expect(context).not.toContain("359,214 characters read");
+  });
+});

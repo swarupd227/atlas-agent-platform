@@ -41,8 +41,16 @@ export interface RunDocument {
   chars: number;
   /** False when no text could be read -- a scan, an image-only PDF, an empty file. */
   readable: boolean;
-  /** True when the reader stopped early: what the steps see is a partial document. */
+  /**
+   * True when this step is given less than the whole document -- whether the
+   * reader stopped early OR the text is longer than one step may be handed.
+   * This is the field a routing rule should test, because it answers "is what
+   * I am looking at the whole thing?", which is the only question that
+   * changes what a step may safely conclude.
+   */
   truncated: boolean;
+  /** Characters actually given to the step, present only when fewer than `chars`. */
+  charsShown?: number;
   /**
    * Pages, for a format that has them. A count only -- the reader knows which
    * page each passage came from (file-extract.ts builds `sections` with a
@@ -104,8 +112,25 @@ export async function resolveRunDocuments(
     }
     const text = (row.extractedText ?? "").trim();
     const meta = (row.extractMeta as Record<string, unknown> | null) ?? {};
-    const truncated = meta.truncated === true;
     const pages = typeof meta.pages === "number" ? meta.pages : undefined;
+
+    // Two different events, and the descriptor used to report only the first.
+    //
+    // `meta.truncated` is the EXTRACTOR hitting its ceiling. A step is also
+    // given less than the whole document when the text is longer than what one
+    // step may be handed (RUN_DOCUMENT_PREVIEW_CHARS) -- and that cut happens
+    // in buildRunDocumentContext, after this descriptor is written, so nothing
+    // used to record it. A 359,214-character schedule reached a step as its
+    // first 120,000 characters with `truncated: false` beside it: the prompt
+    // said so in words while the field a routing rule reads denied it.
+    //
+    // `truncated` now means what the STEP got, because that is the question
+    // anything downstream is really asking. Which of the two cuts happened is
+    // in `note`, and `charsShown` gives the size of what arrived.
+    const extractorCut = meta.truncated === true;
+    const stepCut = text.length > RUN_DOCUMENT_PREVIEW_CHARS;
+    const truncated = extractorCut || stepCut;
+    const charsShown = Math.min(text.length, RUN_DOCUMENT_PREVIEW_CHARS);
     // The extractor already says what it left out and in what unit -- "6 of 18
     // pages, from page 7 on" -- so quote that rather than the vaguer sentence
     // this used to carry. A step told which pages are missing can say so; one
@@ -119,12 +144,19 @@ export async function resolveRunDocuments(
       chars: text.length,
       readable: text.length > 0,
       truncated,
+      ...(charsShown < text.length ? { charsShown } : {}),
       ...(pages ? { pages } : {}),
       ...(text.length === 0
         ? { note: UNREADABLE_NOTE }
-        : truncated
-          ? { note: coverage?.omitted ?? "Only part of this file could be read; what the steps are given is incomplete." }
-          : {}),
+        : stepCut
+          ? {
+            note: `Only the first ${charsShown.toLocaleString("en-US")} of ${text.length.toLocaleString("en-US")} characters are given to this step` +
+              `${extractorCut ? ", and the reader had already stopped short of the end of the file" : ""}. ` +
+              `Anything later in the document was not shown: do not conclude it is absent.`,
+          }
+          : extractorCut
+            ? { note: coverage?.omitted ?? "Only part of this file could be read; what the steps are given is incomplete." }
+            : {}),
     });
   }
 
@@ -192,7 +224,12 @@ export async function buildRunDocumentContext(
     const inventory = readable.map((d) => {
       const extent = [
         d.pages ? `${d.pages} page${d.pages === 1 ? "" : "s"}` : null,
-        `${d.chars.toLocaleString("en-US")} characters read`,
+        // What arrived, against what exists. "120,000 of 359,214 characters"
+        // is a fact a step can act on; "359,214 characters read" beside a
+        // prompt holding a third of that is the contradiction this fixes.
+        d.charsShown !== undefined
+          ? `${d.charsShown.toLocaleString("en-US")} of ${d.chars.toLocaleString("en-US")} characters shown`
+          : `${d.chars.toLocaleString("en-US")} characters read`,
         d.truncated ? "PARTIAL" : null,
       ].filter(Boolean).join(", ");
       return `- ${d.filename} (${extent})${d.truncated && d.note ? `: ${d.note}` : ""}`;
