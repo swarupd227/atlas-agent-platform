@@ -2,6 +2,8 @@
  * Connector binding checks for a proposed team (server/team-bindings.ts).
  */
 import { describe, it, expect } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { assessProposalBindings, resolveBindingServer, resolveDeclaredToolName } from "../server/team-bindings";
 import { BUILTIN_TOOL_NAMES } from "../server/builtin-tool-names";
 
@@ -169,5 +171,63 @@ describe("BUILTIN_TOOL_NAMES", () => {
     // 7 agents declare it. It exists only in the agent wizard's demo palette and
     // in seeded run_traces; knowledge retrieval is a node type, never a tool.
     expect(BUILTIN_TOOL_NAMES).not.toContain("search_knowledge_base");
+  });
+});
+
+/**
+ * Ratchet: a built-in tool cannot exist without being in BUILTIN_TOOL_NAMES.
+ *
+ * WHY, AND IT IS NOT HYPOTHETICAL. The registry imports each module's own
+ * constant so a rename cannot leave a stale literal behind. That stops COPYING
+ * drift and does nothing about OMISSION drift, and omission is what happened:
+ * `c573b7d4` added FINANCIAL_ANALYSIS_TOOL to builtin-calculation-tools.ts and
+ * not to the registry, hours after the registry was written to fix exactly this
+ * for `web_search`. 14 constants in server/, 13 listed, and a declared
+ * `financial_analysis` read as invented. Twice is a missing test, not
+ * carelessness.
+ *
+ * Same shape as the lockdown ratchet in tests/lockdown-native-tools.test.ts:
+ * walk the real directory rather than a hand-kept list of files, because a
+ * built-in added in a NEW module is the case a file list misses.
+ */
+describe("every built-in tool name is registered", () => {
+  const SERVER_DIR = path.join(__dirname, "..", "server");
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith(".ts") ? [path.join(dir, e.name)] : []);
+
+  /**
+   * A `*_TOOL` constant that is NOT a platform built-in. Empty today. Anything
+   * added here needs a reason beside it: the point of failing is to make
+   * somebody classify a new constant, not to be silenced.
+   */
+  const NOT_BUILTIN_TOOLS = new Set<string>([]);
+
+  const declared = walk(SERVER_DIR).flatMap((file) => {
+    const src = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+    return Array.from(src.matchAll(/^export const ([A-Z0-9_]+_TOOL) = "([a-z_]+)"/gm))
+      .map((m) => ({ file: path.relative(SERVER_DIR, file).split(path.sep).join("/"), constant: m[1], value: m[2] }));
+  });
+
+  it("found the constants at all -- a zero here would pass every assertion below", () => {
+    // The guard this whole class of check needs: an empty scan is not a pass.
+    expect(declared.length).toBeGreaterThanOrEqual(14);
+    expect(declared.map((d) => d.value)).toContain("web_search");
+    expect(declared.map((d) => d.value)).toContain("financial_analysis");
+  });
+
+  it("lists every one of them", () => {
+    const listed = new Set(BUILTIN_TOOL_NAMES.map((n) => n.toLowerCase()));
+    const missing = declared
+      .filter((d) => !NOT_BUILTIN_TOOLS.has(d.constant) && !listed.has(d.value.toLowerCase()))
+      .map((d) => `${d.constant} = "${d.value}" (${d.file})`);
+    // Named rather than counted, so the failure says what to add.
+    expect(missing).toEqual([]);
+  });
+
+  it("lists nothing that no module declares", () => {
+    // The other direction: a hand-added literal here that no constant backs.
+    const values = new Set(declared.map((d) => d.value.toLowerCase()));
+    expect(BUILTIN_TOOL_NAMES.filter((n) => !values.has(n.toLowerCase()))).toEqual([]);
   });
 });

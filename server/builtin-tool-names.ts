@@ -20,7 +20,7 @@
  */
 import { MEMORY_TOOL } from "./agent-memory";
 import { SEARCH_ATTACHMENT_TOOL, READ_ATTACHMENT_SECTION_TOOL } from "./attachment-tool-defs";
-import { LOSS_FORECAST_TOOL } from "./builtin-calculation-tools";
+import { LOSS_FORECAST_TOOL, FINANCIAL_ANALYSIS_TOOL } from "./builtin-calculation-tools";
 import {
   GENERATE_PPTX_TOOL,
   GENERATE_PDF_TOOL,
@@ -34,14 +34,28 @@ import { PROPOSE_SKILL_TOOL } from "./skill-proposal-constants";
 import { WEB_SEARCH_TOOL } from "./native-tools";
 
 /**
- * Imported rather than spelled out, so adding a built-in tool adds it here too.
- * A literal copy of a name is how this list goes stale without anybody noticing.
+ * Imported rather than spelled out, so a renamed built-in cannot leave a stale
+ * literal behind.
+ *
+ * THAT IS NOT ENOUGH ON ITS OWN, and this list proved it within hours of being
+ * written. Importing each module's constant stops COPYING drift; it does nothing
+ * about OMISSION drift, which is the failure that actually happens. `c573b7d4`
+ * added `FINANCIAL_ANALYSIS_TOOL` to builtin-calculation-tools.ts and did not add
+ * it here, so server/ held 14 `export const *_TOOL` constants against 13 listed
+ * and a declared `financial_analysis` read as invented -- the same mistake as the
+ * `web_search` omission this file was created to fix.
+ *
+ * So the list is now held by a ratchet, not by diligence:
+ * tests/team-bindings.test.ts walks server/ for every `export const *_TOOL` and
+ * fails naming any that is missing from here. Adding a built-in means adding it
+ * here, and the suite says so rather than a later census discovering it.
  */
 export const BUILTIN_TOOL_NAMES: readonly string[] = [
   MEMORY_TOOL,
   SEARCH_ATTACHMENT_TOOL,
   READ_ATTACHMENT_SECTION_TOOL,
   LOSS_FORECAST_TOOL,
+  FINANCIAL_ANALYSIS_TOOL,
   GENERATE_PPTX_TOOL,
   GENERATE_PDF_TOOL,
   FILL_TEMPLATE_TOOL,
