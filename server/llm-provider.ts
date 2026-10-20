@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { toFile } from "@anthropic-ai/sdk";
 import { anthropicRequestOptions } from "./anthropic-request-options";
 import { ANTHROPIC_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, awaitStreamWithIdleTimeout } from "./anthropic-stream";
 import { currentLlmAbortSignal } from "./llm-abort-context";
@@ -250,6 +250,48 @@ const GOOGLE_MODELS: LLMProviderInfo["models"] = [
   { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", contextWindow: 1048576, costPer1kInput: 0.00015, costPer1kOutput: 0.0006, supportsToolCalling: true, supportsJson: true },
   { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", contextWindow: 1048576, costPer1kInput: 0.0001, costPer1kOutput: 0.0004, supportsToolCalling: true, supportsJson: true },
 ];
+
+const MODEL_CATALOGS: Record<string, LLMProviderInfo["models"]> = {
+  openai: OPENAI_MODELS,
+  anthropic: ANTHROPIC_MODELS,
+  google: GOOGLE_MODELS,
+};
+
+function modelLabelKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Convert a picker/display label into the identifier provider SDKs accept.
+ *
+ * The model catalog is the primary source of truth. The Claude fallback is
+ * deliberately family/version based so a newly released model does not need a
+ * one-off alias before an administrator can use it. Unknown and self-hosted
+ * identifiers are returned unchanged.
+ */
+export function canonicalModelId(providerHint: string | undefined, value: string): string {
+  let model = value.trim();
+  if (!model) return model;
+
+  const qualified = model.match(/^(openai|anthropic|google)\/(.+)$/i);
+  const qualifiedProvider = qualified?.[1].toLowerCase();
+  if (qualified) model = qualified[2].trim();
+
+  const hintedCatalog = MODEL_CATALOGS[(providerHint || qualifiedProvider || "").trim().toLowerCase()];
+  const catalogs = hintedCatalog ? [hintedCatalog] : Object.values(MODEL_CATALOGS);
+  const key = modelLabelKey(model);
+  for (const catalog of catalogs) {
+    const match = catalog.find((entry) => modelLabelKey(entry.id) === key || modelLabelKey(entry.name) === key);
+    if (match) return match.id;
+  }
+
+  if (!providerHint || providerHint.trim().toLowerCase() === "anthropic" || qualifiedProvider === "anthropic") {
+    const claudeLabel = model.match(/^claude\s+(opus|sonnet|haiku)\s+(\d+(?:\.\d+){0,2})\.?$/i);
+    if (claudeLabel) return `claude-${claudeLabel[1].toLowerCase()}-${claudeLabel[2].replace(/\./g, "-")}`;
+  }
+
+  return model;
+}
 
 function estimateCost(
   promptTokens: number,
@@ -1814,6 +1856,15 @@ export async function getAnthropicRawClient(): Promise<Anthropic> {
   return provider.getRawClient();
 }
 
+/** Keep Anthropic SDK file conversion behind the provider boundary. */
+export async function toAnthropicFile(
+  data: Buffer,
+  filename: string,
+  options: { type: string },
+) {
+  return toFile(data, filename, options);
+}
+
 // HTTP status codes that represent permanent request errors — do NOT cascade on these.
 const PERMANENT_ERROR_STATUSES = new Set([400, 401, 403, 404, 422]);
 
@@ -1896,7 +1947,7 @@ export function providerFallbackAllowed(options?: Pick<LLMCompletionOptions, "al
  */
 export function providerForModel(modelId: string | undefined): string | undefined {
   if (!modelId) return undefined;
-  const id = modelId.trim().toLowerCase();
+  const id = canonicalModelId(undefined, modelId).toLowerCase();
   if (!id) return undefined;
   // Some agents store the provider on the id itself ("anthropic/claude-sonnet-4-5").
   const slash = id.indexOf("/");
@@ -1966,12 +2017,13 @@ function optionsForLeg(
 ): LLMCompletionOptions | undefined {
   if (!options) return undefined;
   if (!options.model) return options;
+  const canonical = canonicalModelId(undefined, options.model);
   // Later legs have always dropped the model; keep that, since an id we can't
   // attribute is still likelier to belong to the provider that was asked first.
   if (!isFirstLeg) return { ...options, model: undefined };
-  const owner = providerForModel(options.model);
+  const owner = providerForModel(canonical);
   if (owner && owner !== provider.providerName) return { ...options, model: undefined };
-  return options;
+  return canonical === options.model ? options : { ...options, model: canonical };
 }
 
 // A fallback used to be visible only as a console line: the result said which

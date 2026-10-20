@@ -450,7 +450,7 @@ describe("provider fallback visibility and control", () => {
   });
 });
 
-import { providerForModel, primaryProviderName, isCallerAbort } from "../server/llm-provider";
+import { canonicalModelId, providerForModel, primaryProviderName, isCallerAbort } from "../server/llm-provider";
 
 describe("recognising a caller's own abort", () => {
   it("counts every shape the SDKs actually throw, and nothing else", () => {
@@ -466,10 +466,19 @@ describe("recognising a caller's own abort", () => {
 });
 
 describe("routing a call to the provider that owns its model", () => {
+  it("turns provider display labels into API model ids at the provider boundary", () => {
+    expect(canonicalModelId("anthropic", "Claude Sonnet 5.5")).toBe("claude-sonnet-5-5");
+    expect(canonicalModelId("anthropic", " Claude Opus 5.5. ")).toBe("claude-opus-5-5");
+    expect(canonicalModelId("openai", "GPT-4.1 Mini")).toBe("gpt-4.1-mini");
+    expect(canonicalModelId("anthropic", "claude-sonnet-5-5")).toBe("claude-sonnet-5-5");
+    expect(canonicalModelId("custom", "some-self-hosted-llama")).toBe("some-self-hosted-llama");
+  });
+
   it("attributes model ids to their provider, and leaves unknown ids alone", () => {
     expect(providerForModel("gpt-4.1-mini")).toBe("openai");
     expect(providerForModel("o3-mini")).toBe("openai");
     expect(providerForModel("claude-sonnet-4-5")).toBe("anthropic");
+    expect(providerForModel("Claude Sonnet 5.5")).toBe("anthropic");
     expect(providerForModel("anthropic/claude-sonnet-4-5")).toBe("anthropic");
     expect(providerForModel("gemini-2.5-pro")).toBe("google");
     expect(providerForModel("some-self-hosted-llama")).toBeUndefined();
@@ -516,6 +525,16 @@ describe("routing a call to the provider that owns its model", () => {
     const result = await completeWithFallback(MESSAGES, { model: "gpt-4.1-mini" }, [openai, anthropic]);
     expect(seen).toEqual(["gpt-4.1-mini", undefined]);
     expect(result.providerFallback).toBe(true);
+  });
+
+  it("sends a canonical id when an agent stored a display label", async () => {
+    const seen: Array<string | undefined> = [];
+    const anthropic = mockProvider("anthropic", async (_m, o) => {
+      seen.push(o?.model);
+      return makeResult("from-anthropic");
+    });
+    await completeWithFallback(MESSAGES, { requestedProvider: "anthropic", model: "Claude Sonnet 5.5" }, [anthropic]);
+    expect(seen).toEqual(["claude-sonnet-5-5"]);
   });
 });
 
