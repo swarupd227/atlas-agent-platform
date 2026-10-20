@@ -44,8 +44,12 @@ describe("eval worker regression gate", () => {
     const src = readFileSync(join(__dirname, "..", "server", "worker.ts"), "utf8").replace(/\r\n/g, "\n");
     const gateAt = src.indexOf("let gateTags: string[] | null = null;");
     const completeAt = src.indexOf("...(gateTags ? { tags: gateTags } : {}),");
+    const updateAt = src.lastIndexOf("await storage.updateEvalTestRun(runId, {", completeAt);
+    const updateEnd = src.indexOf("});", completeAt);
     expect(gateAt).toBeGreaterThan(0);
     expect(completeAt).toBeGreaterThan(gateAt);
-    expect(src.slice(completeAt - 400, completeAt)).toContain('status: "completed"');
+    expect(updateAt).toBeGreaterThan(gateAt);
+    expect(updateEnd).toBeGreaterThan(completeAt);
+    expect(src.slice(updateAt, updateEnd)).toContain('status: "completed"');
   });
 });

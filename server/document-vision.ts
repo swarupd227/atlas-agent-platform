@@ -120,15 +120,14 @@ export async function visionPagesFor(
     const { images, total } = await renderPages(bytes, MAX_VISION_PAGES);
     if (!images.length) return null;
 
-    const { getAnthropicRawClient } = await import("./llm-provider");
-    const { toFile } = await import("@anthropic-ai/sdk");
+    const { getAnthropicRawClient, toAnthropicFile } = await import("./llm-provider");
     const client = await getAnthropicRawClient();
     if (!client) return null;
 
     const fileIds: string[] = [];
     for (const [i, image] of images.entries()) {
       const uploaded = await client.beta.files.upload({
-        file: await toFile(image, `${filename}-p${i + 1}.png`, { type: "image/png" }),
+        file: await toAnthropicFile(image, `${filename}-p${i + 1}.png`, { type: "image/png" }),
       });
       const id = (uploaded as { id?: string }).id;
       // One page failing to upload must not silently renumber the rest, so

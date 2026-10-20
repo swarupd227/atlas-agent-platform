@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { toFile } from "@anthropic-ai/sdk";
 import { anthropicRequestOptions } from "./anthropic-request-options";
 import { ANTHROPIC_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, awaitStreamWithIdleTimeout } from "./anthropic-stream";
 import { currentLlmAbortSignal } from "./llm-abort-context";
@@ -1854,6 +1854,15 @@ export function getDefaultProvider(): LLMProvider {
 export async function getAnthropicRawClient(): Promise<Anthropic> {
   const provider = getProvider("anthropic") as AnthropicProvider;
   return provider.getRawClient();
+}
+
+/** Keep Anthropic SDK file conversion behind the provider boundary. */
+export async function toAnthropicFile(
+  data: Buffer,
+  filename: string,
+  options: { type: string },
+) {
+  return toFile(data, filename, options);
 }
 
 // HTTP status codes that represent permanent request errors — do NOT cascade on these.
