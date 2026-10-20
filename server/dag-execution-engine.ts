@@ -2391,11 +2391,11 @@ export class DAGExecutionEngine {
     // to, which is the same scoping every other state key already gets. A step
     // the document was never routed to does not pay for it.
     const visibleDocuments = runDocumentsInState(config.stateSchema, currentState, stateScope);
-    const documentContext = visibleDocuments.length
+    const documents = visibleDocuments.length
       ? await buildRunDocumentContext(visibleDocuments.map((d) => d.document), config.organizationId ?? undefined)
-      : "";
-    const agentInputWithDocuments = documentContext
-      ? `${agentInput}\n\n## DOCUMENTS THIS RUN WAS GIVEN\n${documentContext}\n`
+      : { text: "", imageFileIds: [] };
+    const agentInputWithDocuments = documents.text
+      ? `${agentInput}\n\n## DOCUMENTS THIS RUN WAS GIVEN\n${documents.text}\n`
       : agentInput;
 
     // A Tool Set node directly upstream of this agent node scopes which MCP
@@ -2427,7 +2427,7 @@ export class DAGExecutionEngine {
     });
     const agentInputWithPrior = priorDecisions.text ? `${agentInputWithDocuments}\n\n${priorDecisions.text}` : agentInputWithDocuments;
 
-    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInputWithPrior, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds);
+    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInputWithPrior, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds, documents.imageFileIds);
 
     const durationMs = Date.now() - start;
 
@@ -2572,11 +2572,18 @@ export class DAGExecutionEngine {
       ...(workerResult.failedFileAttempts?.length ? { failedFileAttempts: workerResult.failedFileAttempts } : {}),
       ...(judgments.length ? { judgments } : {}),
       // What prior decisions this step was shown, kept with the step that was
-      // shown them. Recorded whenever subjects were found, even if nothing
-      // matched -- "we looked and found nothing on this binder" is a different
-      // fact from "we never looked", and an explanation needs to tell them
-      // apart.
-      ...(priorDecisions.subjects.length ? { priorContext: priorDecisions } : {}),
+      // shown them -- ALWAYS, including when there was nothing to show.
+      //
+      // This used to be written only when subjects were found, which made the
+      // two most common outcomes invisible: a step that named no business
+      // object and a run with the layer off both recorded nothing, exactly
+      // like a step that was never prompted. "We looked and found nothing on
+      // this binder", "this step named nothing to look up" and "we never
+      // looked" are three different facts and a reader needs to tell them
+      // apart; `looked` and `skipReason` carry which. The skip record is four
+      // small fields, so recording it on every step costs nothing worth
+      // weighing against being able to measure coverage at all.
+      priorContext: priorDecisions,
     };
   }
 
@@ -3827,6 +3834,10 @@ export class DAGExecutionEngine {
     timeoutMs: number,
     toolAllowlist?: string[],
     upstreamGeneratedFileIds?: string[],
+    /** Rendered pages of a scanned document, to ride as image blocks on the
+     *  worker's message. A string cannot carry an image, so these travel
+     *  beside contextInput rather than inside it. */
+    documentImageFileIds?: string[],
   // This return type is a CONTRACT, not a summary: the body below rebuilds the
   // worker's result field by field, so anything missing from this list is
   // silently dropped on the way up -- produced by the worker, read for by the
@@ -3881,7 +3892,7 @@ export class DAGExecutionEngine {
     );
 
     const workerPromise = runWithLlmAbortSignal(workerAbort.signal, () =>
-      executeWorkerAgent(agentId, mockTeamAgent as any, contextInput, 0, toolAllowlist, upstreamGeneratedFileIds),
+      executeWorkerAgent(agentId, mockTeamAgent as any, contextInput, 0, toolAllowlist, upstreamGeneratedFileIds, documentImageFileIds),
     );
 
     try {

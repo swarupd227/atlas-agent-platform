@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { SECTIONS, memoryEnabledOf, memoryRequestLabel, ontologyProposalLabel, ontologyProposalsEnabledOf, withOntologyProposalsEnabled, policiesByScope, policyEffect, runOutcome, runStats, runReviewEnabledOf, runReviewSummary, sectionFromSearch, skillProposalLabel, skillProposalsEnabledOf, withMemoryEnabled, withRunReviewEnabled, withSkillProposalsEnabled } from "../client/src/pages/agent-overview";
+import { SECTIONS, historySearchEnabledOf, withHistorySearchEnabled, memoryEnabledOf, memoryRequestLabel, ontologyProposalLabel, ontologyProposalsEnabledOf, withOntologyProposalsEnabled, policiesByScope, policyEffect, runOutcome, runStats, runReviewEnabledOf, runReviewSummary, sectionFromSearch, skillProposalLabel, skillProposalsEnabledOf, withMemoryEnabled, withRunReviewEnabled, withSkillProposalsEnabled } from "../client/src/pages/agent-overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "agent-overview.tsx");
@@ -124,6 +124,22 @@ describe("ontology proposals", () => {
   it("says what a proposal asks for", () => {
     expect(ontologyProposalLabel({ kind: "add" })).toBe("Add a concept");
     expect(ontologyProposalLabel({ kind: "revise" })).toBe("Change a concept");
+  });
+});
+
+describe("history search", () => {
+  it("is on only when the agent has opted in, separately from memory and the proposal tools", () => {
+    expect(historySearchEnabledOf({ runtimeConfig: { agentHistorySearch: { enabled: true } } } as any)).toBe(true);
+    expect(historySearchEnabledOf({ runtimeConfig: { agentHistorySearch: { enabled: false } } } as any)).toBe(false);
+    expect(historySearchEnabledOf({ runtimeConfig: { agentMemory: { enabled: true }, agentOntologyProposals: { enabled: true } } } as any)).toBe(false);
+    expect(historySearchEnabledOf({ runtimeConfig: null } as any)).toBe(false);
+  });
+
+  it("switching it on or off leaves the rest of the runtime config alone", () => {
+    const rc = { maxCostPerRunUsd: 2, agentMemory: { enabled: true }, agentHistorySearch: { enabled: false, note: "kept" } };
+    expect(withHistorySearchEnabled(rc, true)).toEqual({ maxCostPerRunUsd: 2, agentMemory: { enabled: true }, agentHistorySearch: { enabled: true, note: "kept" } });
+    expect(withHistorySearchEnabled(null, true)).toEqual({ agentHistorySearch: { enabled: true } });
+    expect(rc.agentHistorySearch.enabled).toBe(false); // the original is not mutated
   });
 });
 

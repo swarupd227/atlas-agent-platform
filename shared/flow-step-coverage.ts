@@ -82,8 +82,24 @@ export function implausibleClaims(
 }
 
 /** An authored connection, in either of the two shapes a flow graph uses. */
-export interface FlowEdgeLike { from?: string; to?: string; source?: string; target?: string }
+export interface FlowEdgeLike { from?: string; to?: string; source?: string; target?: string; condition?: string | null; label?: string | null }
 const edgeEnds = (e: FlowEdgeLike): [string, string] => [String(e.from ?? e.source ?? ""), String(e.to ?? e.target ?? "")];
+
+/** The branch a connection carries once the steps with no node are walked through. */
+export interface CarriedBranch { condition?: string; label?: string }
+
+/**
+ * The same carry rule as deriveEdgesFromFlow (server/team-proposal.ts): a
+ * branch's own condition and label replace the ones on the way in, because the
+ * label into a decision names a hop that no longer exists.
+ */
+function carryBranch(e: FlowEdgeLike, prev: CarriedBranch): CarriedBranch {
+  const own = String(e.condition ?? "").trim();
+  const label = String(e.label ?? "").trim();
+  const condition = own || prev.condition;
+  const name = own ? (label || own) : (label || prev.label);
+  return { ...(condition ? { condition } : {}), ...(name ? { label: name } : {}) };
+}
 
 /**
  * The pairs of steps that must end up connected in a built team.
@@ -99,25 +115,26 @@ const edgeEnds = (e: FlowEdgeLike): [string, string] => [String(e.from ?? e.sour
 export function connectedStepPairs(
   edges: FlowEdgeLike[],
   hasNode: (stepId: string) => boolean,
-): Array<[string, string]> {
-  const out = new Map<string, [string, string]>();
-  const next = new Map<string, string[]>();
+): Array<[string, string, CarriedBranch]> {
+  const out = new Map<string, [string, string, CarriedBranch]>();
+  const next = new Map<string, FlowEdgeLike[]>();
   for (const e of edges) {
     const [from, to] = edgeEnds(e);
     if (!from || !to) continue;
-    next.set(from, [...(next.get(from) ?? []), to]);
+    next.set(from, [...(next.get(from) ?? []), e]);
   }
   for (const from of Array.from(next.keys())) {
     if (!hasNode(from)) continue;
     const seen = new Set<string>([from]);
-    const queue = [...(next.get(from) ?? [])];
+    const queue: Array<[string, CarriedBranch]> = (next.get(from) ?? []).map((e) => [edgeEnds(e)[1], carryBranch(e, {})]);
     while (queue.length) {
-      const step = queue.shift()!;
+      const [step, branch] = queue.shift()!;
       if (seen.has(step)) continue;
       seen.add(step);
-      if (hasNode(step)) { out.set(`${from}->${step}`, [from, step]); continue; }
-      // No node of its own: the connection carries on through it.
-      queue.push(...(next.get(step) ?? []));
+      if (hasNode(step)) { out.set(`${from}->${step}`, [from, step, branch]); continue; }
+      // No node of its own: the connection carries on through it, and so does
+      // the branch -- a decision's condition is what decides this hop.
+      for (const e of next.get(step) ?? []) queue.push([edgeEnds(e)[1], carryBranch(e, branch)]);
     }
   }
   return Array.from(out.values());

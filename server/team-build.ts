@@ -1842,17 +1842,27 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     for (const e of await storage.getTeamBlueprintEdges(blueprint.id).catch(() => [] as any[])) {
       existing.add(`${(e as any).sourceNodeId}->${(e as any).targetNodeId}`);
     }
-    for (const [fromStep, toStep] of connectedStepPairs(authoredEdges, (id) => nodeByStepId.has(id))) {
+    for (const [fromStep, toStep, branch] of connectedStepPairs(authoredEdges, (id) => nodeByStepId.has(id))) {
       const from = nodeByStepId.get(fromStep);
       const to = nodeByStepId.get(toStep);
       if (!from || !to || from.id === to.id) continue;
       if (existing.has(`${from.id}->${to.id}`)) continue;
+      // The branch is part of the connection. Restored bare, both sides of every
+      // decision ran, and a gate's decline path ran on approval: gateEdgePolarity
+      // reads the condition, the rule or the label, and "step order" has none.
+      // Live 2026-10-19: a 60-step flow built with pipeline: null restored all 55
+      // connections and none of its 11 conditions. Same shape as the pipeline
+      // path above, so either route builds the same edge.
+      const decisionEdge = from.nodeType === "decision" && decisionAnswerType((from.config as any)?.decision) === "branch";
       await storage.createTeamBlueprintEdge({
         blueprintId: blueprint.id,
         sourceNodeId: from.id,
         targetNodeId: to.id,
-        label: "step order",
+        label: branch.label || "step order",
         failureMode: "escalate",
+        ...(decisionEdge
+          ? { condition: branch.condition || branch.label || undefined, evaluationMode: "decision" }
+          : edgeRuleForCondition(branch.condition)),
       });
       existing.add(`${from.id}->${to.id}`);
       flowEdgesRestored++;

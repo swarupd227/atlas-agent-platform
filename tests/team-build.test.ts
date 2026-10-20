@@ -98,6 +98,7 @@ vi.mock("../server/auth", () => ({ getDefaultOrgId: () => "default-org" }));
 import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError, IncompletePlanError, ImplausibleClaimError } from "../server/team-build";
 import { storage } from "../server/storage";
 import { computeWaves } from "../server/dag-execution-engine";
+import { gateEdgePolarity } from "../shared/gate-edge-polarity";
 
 const worker = (name: string, extra: Record<string, unknown> = {}) => ({ name, description: `${name} does its step`, ...extra });
 
@@ -1044,6 +1045,75 @@ describe("the connections the author drew", () => {
     const body = teamBuildBodySchema.parse({ ...plan, processFlowId: "flow-9" });
     await buildTeamFromProposal(body, { orgId: "org-a" });
     expect(edgePairs()).toContain("Fetch the record -> Read the record");
+  });
+
+  it("restores a decision's branches as the rules the flow draws, not as two unconditional edges", async () => {
+    const withDecision = [
+      { id: "s0", type: "trigger", label: "A request arrives" },
+      { id: "s1", type: "get_info", label: "Fetch the record" },
+      { id: "sd", type: "make_decision", label: "Record found?" },
+      { id: "s2", type: "ai_reasoning", label: "Read the record" },
+      { id: "s4", type: "take_action", label: "Ask again" },
+    ];
+    const edges = [
+      { id: "e0", from: "s0", to: "s1" },
+      { id: "e1", from: "s1", to: "sd" },
+      { id: "e2", from: "sd", to: "s2", condition: "fetch_the_record.found == true", label: "Found" },
+      { id: "e3", from: "sd", to: "s4", condition: "fetch_the_record.found == false", label: "Not found" },
+    ];
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Record Orchestrator", description: "coordinates" },
+      workers: [
+        worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+        worker("Read the record", { flowStepLabels: ["Read the record"] }),
+        worker("Ask again", { flowStepLabels: ["Ask again"] }),
+      ],
+      processFlowSteps: withDecision,
+      processFlowEdges: edges,
+      pipeline: null,
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    const edgeTo = (label: string) => state.edges.find((e) => nodeLabel(e.sourceNodeId) === "Fetch the record" && nodeLabel(e.targetNodeId) === label);
+    expect(edgeTo("Read the record")).toMatchObject({ label: "Found", evaluationMode: "deterministic", rule: { combinator: "AND", conditions: [{ field: "fetch_the_record.found", operator: "==", value: true }] } });
+    expect(edgeTo("Ask again")).toMatchObject({ label: "Not found", evaluationMode: "deterministic", rule: { conditions: [{ field: "fetch_the_record.found", operator: "==", value: false }] } });
+  });
+
+  it("keeps a gate's decline branch a decline when the connection is restored", async () => {
+    const withGate = [
+      { id: "s0", type: "trigger", label: "A request arrives" },
+      { id: "sg", type: "expert_approval", label: "Manager approves" },
+      { id: "sy", type: "take_action", label: "Record acceptance" },
+      { id: "sn", type: "take_action", label: "Record override" },
+    ];
+    const edges = [
+      { id: "e0", from: "s0", to: "sg" },
+      { id: "e1", from: "sg", to: "sy", condition: "manager_approves.approved == true", label: "Approved" },
+      { id: "e2", from: "sg", to: "sn", condition: "manager_approves.approved == false", label: "Rejected" },
+    ];
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Gate Orchestrator", description: "coordinates" },
+      workers: [
+        worker("Manager approves", { flowStepLabels: ["Manager approves"], isHumanCheckpoint: true }),
+        worker("Record acceptance", { flowStepLabels: ["Record acceptance"] }),
+        worker("Record override", { flowStepLabels: ["Record override"] }),
+      ],
+      processFlowSteps: withGate,
+      processFlowEdges: edges,
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    const out = (label: string) => state.edges.find((e) => nodeLabel(e.sourceNodeId) === "Manager approves" && nodeLabel(e.targetNodeId) === label);
+    expect(gateEdgePolarity(out("Record acceptance"))).toBe("approve");
+    expect(gateEdgePolarity(out("Record override"))).toBe("reject");
+  });
+
+  it("still restores an unconditional connection as plain step order, with no rule", async () => {
+    // Pins the existing behaviour: the first test in this describe, plus the edge's shape.
+    const body = teamBuildBodySchema.parse({ ...plan, processFlowEdges: flowEdges });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    const e = state.edges.find((x) => nodeLabel(x.sourceNodeId) === "Fetch the record" && nodeLabel(x.targetNodeId) === "Read the record");
+    expect(e).toMatchObject({ label: "step order" });
+    expect(e.rule).toBeUndefined();
+    expect(e.evaluationMode).toBeUndefined();
   });
 });
 

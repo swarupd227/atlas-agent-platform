@@ -343,6 +343,13 @@ export function extractSubjects(state: Record<string, unknown> | null | undefine
 /** Why a requested subject returned nothing, or why an item was withheld. */
 export type OmissionReason =
   | "no_record" | "expired" | "unreviewed" | "low_confidence"
+  /**
+   * The lookup itself failed (storage error, bad blueprint read). The step
+   * continues without precedent, as it always has -- but silently it read as
+   * "searched and found nothing", which is the one reading that lets a broken
+   * context layer look like an empty one.
+   */
+  | "lookup_failed"
   | "withheld_precedent_for_purpose" | "unclassified_keys"
   /**
    * Withheld by the recall gate, alongside "expired", "unreviewed" and

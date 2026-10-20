@@ -160,6 +160,17 @@ export function withOntologyProposalsEnabled(runtimeConfig: unknown, enabled: bo
   return { ...rc, agentOntologyProposals: { ...(rc.agentOntologyProposals ?? {}), enabled } };
 }
 
+/** An agent may search its own earlier runs only when it has opted in (the AGENT_HISTORY_SEARCH flag is the other half; see server/history-search.ts). */
+export function historySearchEnabledOf(agent: Pick<Agent, "runtimeConfig">): boolean {
+  return (agent.runtimeConfig as Record<string, any> | null | undefined)?.agentHistorySearch?.enabled === true;
+}
+
+/** The runtime config with history search switched on or off, leaving everything else in it alone. */
+export function withHistorySearchEnabled(runtimeConfig: unknown, enabled: boolean): Record<string, unknown> {
+  const rc = (runtimeConfig && typeof runtimeConfig === "object" ? runtimeConfig : {}) as Record<string, any>;
+  return { ...rc, agentHistorySearch: { ...(rc.agentHistorySearch ?? {}), enabled } };
+}
+
 interface OntologyProposalRow { id: string; kind: string; label: string; industryId: string; status: string; reason: string | null; approvalId: string | null }
 interface OntologyProposalOverview { pending: OntologyProposalRow[]; recent: OntologyProposalRow[] }
 
@@ -608,6 +619,7 @@ function Memory({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toa
 
       <SkillProposals agent={agent} canEdit={canEdit} toast={toast} />
       <OntologyProposals agent={agent} canEdit={canEdit} toast={toast} />
+      <HistorySearch agent={agent} canEdit={canEdit} toast={toast} />
       <RunReviews agent={agent} canEdit={canEdit} toast={toast} />
     </div>
   );
@@ -679,6 +691,33 @@ function OntologyProposals({ agent, canEdit, toast }: { agent: Agent; canEdit: b
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * Whether the agent may search its own earlier runs. It only reads: nothing here changes what
+ * the agent has done, and it can look at no other agent's runs.
+ */
+function HistorySearch({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toast: ReturnType<typeof useToast>["toast"] }) {
+  const on = historySearchEnabledOf(agent);
+  const toggle = useMutation({
+    mutationFn: async () => (await apiRequest("PATCH", `/api/agents/${agent.id}`, { runtimeConfig: withHistorySearchEnabled(agent.runtimeConfig, !on) })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      toast({ title: on ? "History search turned off" : "History search turned on", description: "The change is recorded in the audit trail." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't change it", description: e?.message, variant: "destructive" }),
+  });
+  return (
+    <section data-testid="history-search-section">
+      <SectionHeading>Searching its own history</SectionHeading>
+      <div className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm">
+        <span className={`h-2 w-2 shrink-0 rounded-full ${on ? "bg-emerald-500" : "bg-muted-foreground/40"}`} aria-hidden />
+        <span className="min-w-0 flex-1">{on ? "On. It can search what it was asked and what it produced in its own earlier runs." : "Off. It cannot look back through its earlier runs."}</span>
+        {canEdit && <Button size="sm" variant="outline" disabled={toggle.isPending} onClick={() => toggle.mutate()} data-testid="button-toggle-history-search">{on ? "Turn off" : "Turn on"}</Button>}
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">It only reads, and only this agent's own runs in your organization. Passages are short, redacted by the agent's policies, labelled as data, and withheld if they read like instructions. Each search is audited. This also needs the AGENT_HISTORY_SEARCH flag on under Admin → Platform flags.</p>
+    </section>
   );
 }
 

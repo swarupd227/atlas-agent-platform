@@ -1097,6 +1097,21 @@ async function settingIsOn(key: string): Promise<boolean> {
 export interface PriorContextForPrompt {
   /** The prompt block, or "" when nothing was injected. */
   text: string;
+  /**
+   * Whether the layer got as far as searching for precedent.
+   *
+   * An empty record was previously indistinguishable across three different
+   * facts: the layer is off, the step named no business object, and the layer
+   * searched and found nothing. The engine only RECORDED the record when
+   * subjects existed, so the first two left no trace at all -- measured
+   * 2026-10-19, 10 of 279 steps across 40 runs carried a priorContext and
+   * "looked and found nothing" was 0 of them, because that case could not be
+   * written down. In the one feature whose job is to say truthfully where a
+   * decision came from, silence must not be able to mean three things.
+   */
+  looked: boolean;
+  /** Why the search did not happen. Absent when it did. */
+  skipReason?: "layer_off" | "no_subject";
   /** Business objects the step's state named. Present even when nothing matched. */
   subjects: Subject[];
   /** `subjects` on an item is every object that one decision answered for. */
@@ -1105,7 +1120,9 @@ export interface PriorContextForPrompt {
   omissions: Array<{ reason: string; detail: string }>;
 }
 
-const NOTHING: PriorContextForPrompt = { text: "", subjects: [], items: [], conflicts: [], omissions: [] };
+/** Two different silences, told apart. Neither is "searched and found nothing". */
+const LAYER_OFF: PriorContextForPrompt = { text: "", looked: false, skipReason: "layer_off", subjects: [], items: [], conflicts: [], omissions: [] };
+const NO_SUBJECT: PriorContextForPrompt = { text: "", looked: false, skipReason: "no_subject", subjects: [], items: [], conflicts: [], omissions: [] };
 
 export async function priorDecisionsForPrompt(input: {
   teamAgentId: string;
@@ -1114,12 +1131,12 @@ export async function priorDecisionsForPrompt(input: {
   purpose: Purpose;
   limit?: number;
 }): Promise<PriorContextForPrompt> {
-  if (!(await intelligenceContextEnabled())) return NOTHING;
+  if (!(await intelligenceContextEnabled())) return LAYER_OFF;
   // The subjects come from the state the run has reached: the step being
   // prompted is mid-run, and what it is deciding about is whatever upstream
   // steps have established.
   const subjects = extractSubjects(input.state).map(s => s.subject);
-  if (subjects.length === 0) return NOTHING;
+  if (subjects.length === 0) return NO_SUBJECT;
   try {
     const resolved = await resolveContext({
       subjects,
@@ -1131,6 +1148,10 @@ export async function priorDecisionsForPrompt(input: {
     });
     return {
       text: renderContextForPrompt(resolved),
+      // It searched. Whether it found anything is `items`, and why it withheld
+      // what it found is `omissions` -- three separate facts, none inferred
+      // from the absence of another.
+      looked: true,
       subjects,
       items: resolved.items.map(i => ({
         subject: i.subject,
@@ -1150,7 +1171,11 @@ export async function priorDecisionsForPrompt(input: {
     // A failure here must not fail the step. The run proceeds without prior
     // context, which is how every run worked before this existed.
     console.error("[intelligence-context] resolve failed; step continues without prior decisions:", err?.message);
-    return NOTHING;
+    // It DID look, and the look broke. Reported as an omission rather than
+    // returned as an empty result, so a failing layer cannot pass for an
+    // empty one -- and the subjects it was about to look up are kept, since
+    // they are what someone would retry with.
+    return { text: "", looked: true, subjects, items: [], conflicts: [], omissions: [{ reason: "lookup_failed", detail: String(err?.message ?? "unknown error") }] };
   }
 }
 

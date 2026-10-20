@@ -32,6 +32,7 @@ import { DECISION_RECORD_SUFFIX } from "@shared/run-overlay";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
 import { inputFields } from "@shared/run-input";
 import { splitWorkingNotes, extractHtmlDocument, openRunStepHtml, stripVerifiedLedger, isEmptyFactCapture } from "@/lib/agent-output";
+import { RunIntelligenceContext, type PriorContext } from "@/components/run-intelligence-context";
 
 // Mirrors computeWaves()'s real output shape (server/dag-execution-engine.ts)
 // -- GET /api/team-agents/:id/dag-waves returns this raw wave plan, where
@@ -53,6 +54,8 @@ interface DagWaveNodeResult {
   output: Record<string, any>;
   /** The platform's own checks on this step's output: one per bound policy, plus a fact check where one applied. */
   judgments?: Array<{ kind: "policy" | "facts"; subject: string; ok: boolean; severity?: string; evidence?: string; detail?: string[] }>;
+  /** Prior decisions the Intelligence Context layer showed this step, persisted by the engine with the result. */
+  priorContext?: PriorContext;
 }
 interface DagWaveResult {
   waveNumber: number;
@@ -941,6 +944,13 @@ export default function DagRunMonitor() {
                 <p className="text-xs text-muted-foreground">Worth checking whether the work was split as intended. Two steps can legitimately rest on the same passage.</p>
               </div>
             )}
+
+            {/* Intelligence Context: what each step was shown from prior decisions, and what this run recorded. */}
+            <RunIntelligenceContext
+              runId={run.id}
+              runIsTerminal={runIsTerminal}
+              steps={steps.map((s) => ({ key: s.key, label: s.label, priorContext: s.result?.priorContext }))}
+            />
 
             {/* Deliverables */}
             {runFiles.length > 0 && (

@@ -29,6 +29,7 @@ import {
   READ_DOCUMENT_TOOL,
 } from "./builtin-document-tools";
 import { READ_SKILL_TOOL } from "./builtin-skill-tools";
+import { SEARCH_HISTORY_TOOL } from "./history-search-constants";
 import { PROPOSE_ONTOLOGY_TOOL } from "./ontology-proposal-constants";
 import { PROPOSE_SKILL_TOOL } from "./skill-proposal-constants";
 import { WEB_SEARCH_TOOL } from "./native-tools";
@@ -64,6 +65,7 @@ export const BUILTIN_TOOL_NAMES: readonly string[] = [
   READ_SKILL_TOOL,
   PROPOSE_ONTOLOGY_TOOL,
   PROPOSE_SKILL_TOOL,
+  SEARCH_HISTORY_TOOL,
   WEB_SEARCH_TOOL,
 ];
 

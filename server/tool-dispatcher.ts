@@ -40,6 +40,7 @@ import { BUILTIN_ATTACHMENT_SERVER_ID } from "./attachment-tool-defs";
 import { BUILTIN_MEMORY_SERVER_ID } from "./builtin-memory-tools";
 import { BUILTIN_SKILL_PROPOSAL_SERVER_ID } from "./skill-proposal-constants";
 import { BUILTIN_ONTOLOGY_PROPOSAL_SERVER_ID } from "./ontology-proposal-constants";
+import { BUILTIN_HISTORY_SERVER_ID } from "./history-search-constants";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
 export type PolicyBundle = Awaited<ReturnType<typeof resolvePolicyBundle>>;
@@ -777,6 +778,13 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
     return executeBuiltinOntologyProposalTool(tool.toolName, args, { orgId, agentId, runId });
   }
 
+  // Built-in history search (server/builtin-history-tools.ts): reads this agent's own earlier
+  // runs in its own organization; the agent and the organization come from here, not the model.
+  const { isBuiltinHistoryTool, executeBuiltinHistoryTool } = await import("./builtin-history-tools");
+  if (isBuiltinHistoryTool(tool)) {
+    return executeBuiltinHistoryTool(tool.toolName, args, { orgId, agentId });
+  }
+
   // Enterprise connectors (GitHub, Slack, Salesforce, the SQL family, …) are
   // OUR OWN code and must be dispatched in-process, so the agent's org context
   // and its connection pin select the right encrypted credentials.
@@ -1055,7 +1063,11 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   const skillPropose = tool.serverId === BUILTIN_SKILL_PROPOSAL_SERVER_ID;
   // And the ontology-proposal tool, for the same reason.
   const ontologyPropose = tool.serverId === BUILTIN_ONTOLOGY_PROPOSAL_SERVER_ID;
-  const exemptFromAllowLists = skillRead || memoryPropose || skillPropose || ontologyPropose;
+  // The history-search tool only READS this agent's own earlier runs (server/builtin-history-tools.ts):
+  // exempt from the allow-lists for the same reason as read_skill, and, like it, it runs in a shadow
+  // run too, where "[DRY RUN]" in place of what the live run saw would compare different things.
+  const historyRead = tool.serverId === BUILTIN_HISTORY_SERVER_ID;
+  const exemptFromAllowLists = skillRead || memoryPropose || skillPropose || ontologyPropose || historyRead;
 
   const finish = (partial: Omit<DispatchResult, "redactedArgs" | "startedAt" | "completedAt" | "durationMs">): DispatchResult => {
     const durationMs = Date.now() - startMs;
@@ -1279,7 +1291,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   }
 
   // 5. Shadow environment — log the intended call, never execute.
-  if (req.shadow && !skillRead) {
+  if (req.shadow && !skillRead && !historyRead) {
     storage.createAuditEvent({
       action: "tool_proxy_shadow_dry_run",
       objectType: "tool",

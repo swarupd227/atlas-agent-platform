@@ -19,6 +19,8 @@ import {
   netPresentValue,
   internalRateOfReturn,
   compareCoverageBids,
+  applyRegressionLine,
+  valueAtRisk,
 } from "../server/builtin-calculation-tools";
 
 const skill = (markdownBody: string, status = "active") => ({ id: "s1", name: "Loss Forecasting", status, markdownBody } as any);
@@ -178,6 +180,60 @@ describe("regression analysis (payroll against claims)", () => {
     expect("error" in linearRegression([1, 2], [1, 2])).toBe(true);
     expect("error" in linearRegression([3, 3, 3], [1, 2, 3])).toBe(true);
     expect("error" in linearRegression([1, 2, 3], [1, 2])).toBe(true);
+  });
+});
+
+describe("a line already fitted (the Great West States derailments)", () => {
+  it("applies Y = 2.31 + 0.022 X at 640 thousand miles: about 16 derailments, and says what X is measured in", () => {
+    const r = applyRegressionLine(0.022, 2.31, [640], "thousands of miles");
+    if ("error" in r) throw new Error(r.error);
+    expect(r.predictions).toEqual([{ x: 640, forecast: 16.39 }]);
+    expect(r.arithmetic.join("\n")).toContain("2.31 + 0.022 x 640 = 16.39");
+    expect(r.arithmetic.join("\n")).toContain("X is measured in thousands of miles");
+    // The scale trap: 640,000 fed as miles gives an absurd figure the caller can see.
+    const wrong = applyRegressionLine(0.022, 2.31, [640000]);
+    expect(!("error" in wrong) && wrong.predictions[0].forecast).toBe(14082.31);
+    expect("error" in applyRegressionLine(NaN, 2.31, [640])).toBe(true);
+    expect("error" in applyRegressionLine(0.022, 2.31, [])).toBe(true);
+  });
+  it("the tool takes slope and intercept in place of x and y", async () => {
+    const r = await executeBuiltinCalculationTool(LOSS_FORECAST_TOOL, { method: "regression", slope: 0.022, intercept: 2.31, predictAt: [640], xUnit: "thousands of miles" }, ctx);
+    expect(r.ok).toBe(true);
+    expect(r.predictions[0].forecast).toBe(16.39);
+    expect(r.xUnit).toBe("thousands of miles");
+  });
+});
+
+describe("value at risk", () => {
+  it("parametric: a daily standard deviation of $30,395 gives a one-day 95 percent VaR of about $50,000, read as a 5 percent chance of a worse day", () => {
+    const r = valueAtRisk({ mean: 0, standardDeviation: 30395, confidence: 95 });
+    if ("error" in r) throw new Error(r.error);
+    expect(r.method).toBe("parametric");
+    expect(r.valueAtRisk).toBeCloseTo(50000, -2);
+    expect(r.arithmetic.join("\n")).toContain("5 percent probability that the loss over 1 period(s) exceeds");
+    const tenDay = valueAtRisk({ standardDeviation: 30395, confidence: 99, horizonPeriods: 10 });
+    expect(!("error" in tenDay) && tenDay.valueAtRisk).toBeCloseTo(2.326 * 30395 * Math.sqrt(10), 0);
+    const fraction = valueAtRisk({ mean: 0, standardDeviation: 0.012, confidence: 95, portfolioValue: 2500000 });
+    expect(!("error" in fraction) && fraction.valueAtRisk).toBeCloseTo(1.645 * 0.012 * 2500000, 0);
+    expect("error" in valueAtRisk({ standardDeviation: -1 })).toBe(true);
+    expect("error" in valueAtRisk({})).toBe(true);
+  });
+  it("historical: the 95 percent VaR of 20 daily changes is the worst one, of 100 the fifth worst", () => {
+    const twenty = Array.from({ length: 19 }, (_, i) => 1000 * (i - 9)).concat([-50000]);
+    const r = valueAtRisk({ series: twenty, confidence: 95 });
+    if ("error" in r) throw new Error(r.error);
+    expect(r.method).toBe("historical");
+    expect(r.rank).toBe(1);
+    expect(r.valueAtRisk).toBe(50000);
+    const hundred = Array.from({ length: 100 }, (_, i) => i - 50);
+    const r2 = valueAtRisk({ series: hundred, confidence: 95 });
+    expect(!("error" in r2) && [r2.rank, r2.quantileChange, r2.valueAtRisk]).toEqual([5, -46, 46]);
+    expect("error" in valueAtRisk({ series: [1, 2, 3] })).toBe(true);
+  });
+  it("the tool routes value_at_risk without a rate", async () => {
+    const r = await executeBuiltinCalculationTool(FINANCIAL_ANALYSIS_TOOL, { method: "value_at_risk", standardDeviation: 30395, confidence: 95 }, ctx);
+    expect(r.ok).toBe(true);
+    expect(r.valueAtRisk).toBeCloseTo(50000, -2);
   });
 });
 

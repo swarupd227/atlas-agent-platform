@@ -1811,6 +1811,12 @@ export async function seedDatabase() {
         category: "decisions",
       },
       {
+        key: "AGENT_HISTORY_SEARCH",
+        value: "off",
+        description: "on = an agent that has opted in (its Memory section) may SEARCH its own earlier runs, what it was asked and what it produced, with the search_history tool; and Cowork may search the signed-in person's own conversations. A search returns short passages, redacted by the agent's policies and labelled as data, only from the agent's own runs in its own organization (or the person's own threads); a passage that reads like instructions to a model is withheld. Every search is audited by id and a hash of the query. off = no agent or Cowork search of history.",
+        category: "decisions",
+      },
+      {
         key: "AGENT_RUN_REVIEW",
         value: "off",
         description: "on = after a finished run of an agent that has opted in (its Memory section), a model with no tools reads a masked digest of the run and may SUGGEST a memory note or a skill. Suggestions are filed as approvals and change nothing until a person decides; only the kinds the agent has itself enabled are ever suggested. Each review costs a model call, bounded by AGENT_RUN_REVIEW_DAILY_BUDGET_USD. off = no run is reviewed.",

@@ -26,6 +26,8 @@ import { touchSkillUse } from "./skill-usage";
 import { skillProposalToolsFor } from "./builtin-skill-proposal-tools";
 import { isOntologyProposalEnabled } from "./agent-ontology-proposals";
 import { ontologyProposalToolsFor } from "./builtin-ontology-proposal-tools";
+import { isHistorySearchEnabled } from "./history-search";
+import { historySearchToolsFor } from "./builtin-history-tools";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -1157,7 +1159,7 @@ export async function executePromptWithMcp(
   prompt: string,
   industry?: string,
   agentSystemPrompt?: string,
-  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number; dagToolAllowlist?: string[]; /** agent_generated_files ids produced by earlier nodes of the same Team DAG run -- readied for this worker's container (see "Upstream deliverables" below). */ upstreamGeneratedFileIds?: string[] },
+  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number; dagToolAllowlist?: string[]; /** agent_generated_files ids produced by earlier nodes of the same Team DAG run -- readied for this worker's container (see "Upstream deliverables" below). */ upstreamGeneratedFileIds?: string[]; /** Rendered pages of a scanned run document, attached as image blocks (server/document-vision.ts). */ documentImageFileIds?: string[] },
   onProgress?: (event: RuntimeProgressEvent) => void,
   orgId?: string | null,
   callerRole?: RoleId | null,
@@ -1394,6 +1396,21 @@ export async function executePromptWithMcp(
   // and never fails the node.
   let brandAttachment: Pick<LLMMessage, "attachmentFileIds" | "attachmentImageFileIds"> = {};
   let brandContext = "";
+
+  // ── Scanned run documents → vision blocks (server/document-vision.ts) ─────
+  // A `file` input with no text layer was rendered to page images at run
+  // setup; those ids ride here as image blocks, which is the only way a scan
+  // can reach the model at all. Merged into the same field the brand assets
+  // use, so a worker given both gets both. Unconditional: this does not need
+  // code execution, a container, or any skill -- just the pages.
+  const documentImages = options?.documentImageFileIds ?? [];
+  if (documentImages.length) {
+    brandAttachment = {
+      ...brandAttachment,
+      attachmentImageFileIds: [...(brandAttachment.attachmentImageFileIds ?? []), ...documentImages],
+    };
+    console.log(`[document-vision] worker=${agentId} attached ${documentImages.length} page image(s) as vision blocks`);
+  }
   if (getCodeExecConfig() && orgId) {
     try {
       const brandIds = await resolveBrandAssetFileIds(resolvedActiveSkills, orgId);
@@ -1698,6 +1715,14 @@ export async function executePromptWithMcp(
     if (await isOntologyProposalEnabled(options?.runtimeConfig)) availableTools.push(...ontologyProposalToolsFor());
   } catch (opErr: any) {
     console.warn(`[ontology-proposals] propose_ontology_concept unavailable (non-fatal): ${opErr.message}`);
+  }
+
+  // The history-search tool (server/builtin-history-tools.ts): searches this agent's own earlier
+  // runs. Read-only; same gating as the proposal tools.
+  try {
+    if (await isHistorySearchEnabled(options?.runtimeConfig)) availableTools.push(...historySearchToolsFor());
+  } catch (hsErr: any) {
+    console.warn(`[history-search] search_history unavailable (non-fatal): ${hsErr.message}`);
   }
 
   const canonicalTools = buildCanonicalTools(availableTools);
@@ -4048,6 +4073,10 @@ export async function executeWorkerAgent(
   dagToolAllowlist?: string[],
   /** Deliverables from earlier nodes of the same DAG run (agent_generated_files ids). */
   upstreamGeneratedFileIds?: string[],
+  /** Anthropic Files ids for the rendered pages of a scanned run document,
+   *  attached as image blocks. A string cannot carry an image, so these
+   *  travel beside previousContext. See server/document-vision.ts. */
+  documentImageFileIds?: string[],
 ): Promise<{
   agentId: string;
   agentName: string;
@@ -4183,6 +4212,7 @@ export async function executeWorkerAgent(
         // language, no forced JSON schema" path instead.
         conversational: workerRtConfig.conversational === true,
         ...(upstreamGeneratedFileIds?.length ? { upstreamGeneratedFileIds } : {}),
+        ...(documentImageFileIds?.length ? { documentImageFileIds } : {}),
       },
       undefined,
       workerRuntimeAgent.orgId ?? undefined,

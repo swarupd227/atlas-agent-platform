@@ -30,6 +30,8 @@ const state: any = {
   caseResults: [] as any[],
   suiteUpdates: [] as any[],
   agentAnswer: "{}",
+  stopReason: "end_turn",
+  modelCalls: [] as Array<{ model: string; max_tokens: number }>,
 };
 
 const decideMany = vi.fn(async ({ questions }: any) => Object.fromEntries(
@@ -62,7 +64,10 @@ vi.mock("../server/claude", () => ({
   callClaude: vi.fn(async () => "{}"),
   callClaudeWithUsage: vi.fn(async () => ({ text: "{}", model: "m", latencyMs: 1, inputTokens: 1, costUsd: 0 })),
   // The agent's answer is what the structured comparison reads.
-  createClaudeMessage: vi.fn(async () => ({ content: [{ type: "text", text: state.agentAnswer }], stop_reason: "end_turn" })),
+  createClaudeMessage: vi.fn(async (opts: any) => {
+    state.modelCalls.push({ model: opts.model, max_tokens: opts.max_tokens });
+    return { content: [{ type: "text", text: state.agentAnswer }], stop_reason: state.stopReason };
+  }),
   stripJsonFences: (s: string) => s,
 }));
 vi.mock("../server/decision-provider", () => ({ decideMany }));
@@ -350,6 +355,9 @@ beforeEach(async () => {
   state.caseResults = [];
   state.suiteUpdates = [];
   state.agentAnswer = "{}";
+  state.stopReason = "end_turn";
+  state.modelCalls = [];
+  state.agent = { id: "agent1", name: "E&S Property Binding Orchestrator", environment: "staging" };
   decideMany.mockClear();
   if (!server) {
     const app = express();
@@ -390,6 +398,37 @@ describe("POST /api/evals/:id/execute instrument routing", () => {
     expect(r.body.passedCases).toBe(0);
     expect(state.caseResults[0].scorerOutputs.noVerdict).toBe(false);
     expect(state.caseResults[0].failingReason).toContain("slaBreached");
+  });
+
+  it("answers with the agent's own Claude model and room for a full answer, and says which model answered", async () => {
+    // Every case used to be answered by claude-opus-4-5 at 1,500 tokens, so a
+    // Sonnet agent's suite scored Opus, and a long structured answer was cut off.
+    state.agent = { ...state.agent, modelProvider: "anthropic", modelName: "claude-sonnet-4-5" };
+    state.cases = [kpiCase()];
+    state.agentAnswer = '{"threshold":0,"slaBreached":true,"expectedAction":"alert_and_escalate"}';
+    await post("/api/evals/s1/execute");
+    expect(state.modelCalls[0]).toEqual({ model: "claude-sonnet-4-5", max_tokens: 4096 });
+    expect(state.runs[0].resultsJson.answeredBy).toBe("claude-sonnet-4-5");
+  });
+
+  it("falls back to the harness model for an agent that does not run on Claude", async () => {
+    state.agent = { ...state.agent, modelProvider: "openai", modelName: "gpt-4.1" };
+    state.cases = [kpiCase()];
+    await post("/api/evals/s1/execute");
+    expect(state.modelCalls[0].model).toBe("claude-opus-4-5");
+    expect(state.runs[0].resultsJson.answeredBy).toBe("claude-opus-4-5");
+  });
+
+  it("reports an answer cut off at the token limit as truncated, not as an omission", async () => {
+    state.cases = [kpiCase()];
+    state.agentAnswer = '## Review\n\n```json\n{"threshold":0,"slaBre';
+    state.stopReason = "max_tokens";
+    await post("/api/evals/s1/execute");
+    const row = state.caseResults[0];
+    expect(row.scorerOutputs.noVerdict).toBe(true);
+    expect(row.scorerOutputs.truncated).toBe(true);
+    expect(row.scorerOutputs.judgeReasoning).toMatch(/^The agent's answer was cut off at the 4096-token answer limit/);
+    expect(state.runs[0].resultsJson.casesTruncated).toBe(1);
   });
 
   it("marks a prose-only agent answer as no verdict rather than a wrong one", async () => {

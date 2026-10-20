@@ -77,7 +77,7 @@ describe("answering with a granted tool", () => {
     expect(payload.ok).toBe(true);
     expect(payload.probability).toBe(0.2);
     expect(payload.arithmetic[0]).toContain("100 / 500 = 0.2");
-    expect(r).toEqual({ text: "P = 100/500 = 0.2, 20 percent per vehicle-year.", skillsLoaded: [], toolsUsed: ["loss_forecast"] });
+    expect(r).toEqual({ text: "P = 100/500 = 0.2, 20 percent per vehicle-year.", skillsLoaded: [], toolsUsed: ["loss_forecast"], truncated: false });
   });
 
   it("returns a bad input as a result the model can correct, and still counts the tool as used", async () => {

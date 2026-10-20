@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "@shared/schema";
 import { ensureMcpServerAuthUnique } from "./mcp-auth-uniqueness";
+import { RUN_OUTPUT_TSV_EXPR, RUN_INPUT_TSV_EXPR, MESSAGE_TSV_EXPR } from "./history-search-constants";
 
 /**
  * `max` is bounded by the Postgres server, not by what we would like.
@@ -2289,6 +2290,21 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_ontology_proposals_agent ON ontology_proposals (organization_id, agent_id, status);
       CREATE INDEX IF NOT EXISTS idx_ontology_proposals_approval ON ontology_proposals (approval_id);
     `);
+
+    // Full-text indexes for history search (server/history-search.ts): the text of what a run was asked and
+    // produced, and of Cowork messages. The expressions are bounded (the first 100,000 characters) because a
+    // tsvector over 1 MB is an error, and an index that errors on one large output would fail its INSERT; the
+    // queries use the identical expressions, which is the only way the planner can use these. Additive.
+    // Optional: history search still works without them, only slower, so a failure here must not stop the migrations after it.
+    try {
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_run_traces_fts_output ON run_traces USING GIN (${RUN_OUTPUT_TSV_EXPR});
+        CREATE INDEX IF NOT EXISTS idx_run_traces_fts_input ON run_traces USING GIN (${RUN_INPUT_TSV_EXPR});
+        CREATE INDEX IF NOT EXISTS idx_astra_messages_fts ON astra_messages USING GIN (${MESSAGE_TSV_EXPR});
+      `);
+    } catch (e: any) {
+      console.warn(`[migrations] history-search indexes were not created (search will be slower): ${e?.message ?? e}`);
+    }
 
     // What the gated dispatcher actually ran. Not audit_events: that write
     // takes a per-org advisory lock and appends to a hash chain, so one row

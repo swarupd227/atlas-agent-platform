@@ -731,7 +731,12 @@ describe("the flag, and what the engine gets", () => {
     for (const v of [null, "off", "", "OFF "]) {
       settingValue = v;
       expect(await intelligenceContextEnabled(), String(v)).toBe(false);
-      expect((await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" })).text, String(v)).toBe("");
+      const off = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
+      expect(off.text, String(v)).toBe("");
+      // An empty text is not enough: the record has to say the layer never
+      // searched, or "off" is indistinguishable from "searched, found nothing".
+      expect(off.looked, String(v)).toBe(false);
+      expect(off.skipReason, String(v)).toBe("layer_off");
     }
     getPlatformSetting.mockRejectedValueOnce(new Error("db down"));
     expect(await intelligenceContextEnabled()).toBe(false);
@@ -762,6 +767,8 @@ describe("the flag, and what the engine gets", () => {
     expect(prior.text).toBe("");
     // No subjects found, so the record says so rather than being empty-but-silent.
     expect(prior.subjects).toEqual([]);
+    expect(prior.looked).toBe(false);
+    expect(prior.skipReason).toBe("no_subject");
   });
 
   it("records which objects each prior decision covered, not just the headline", async () => {
@@ -1793,5 +1800,64 @@ describe("controlsApplied says which policies were actually for this agent", () 
     expect(c.policies[0].version).toBe(3);
     expect(c.guardrails).toEqual(["no_pii"]);
     expect(c.orgWideCount).toBe(2);
+  });
+});
+
+/**
+ * Four outcomes, four records. Measured 2026-10-19 on the deployed build: 10 of
+ * 279 steps across 40 runs carried a priorContext at all, and "looked and found
+ * nothing" was 0 of them -- not because it never happens but because the engine
+ * only wrote the record when subjects existed, so three of these four outcomes
+ * left no trace. The layer whose job is to say where a decision came from could
+ * not say whether it had been consulted.
+ */
+describe("the record tells the four silences apart", () => {
+  beforeEach(() => {
+    runs.length = 0;
+    settingValue = "on";
+    blueprintNodes.length = 0;
+    decisionRecords = [];
+  });
+
+  const ask = (state: Record<string, unknown>) =>
+    priorDecisionsForPrompt({ teamAgentId: "teamA", state, purpose: "draft" });
+
+  it("searched and found nothing: looked, no skip reason, no items", async () => {
+    runs.push(run({ teamAgentId: "teamA" }));
+    // A real subject with no decision behind it -- the case that was previously
+    // unrepresentable, and the one a reader most needs distinguished from "off".
+    const prior = await ask({ submission_check: "Reviewed submission SUB-2026-0001 and found no prior ruling" });
+    expect(prior.subjects, "the subject must be extracted for this to be the right case").toContain("submission:SUB-2026-0001");
+    expect(prior.looked).toBe(true);
+    expect(prior.skipReason).toBeUndefined();
+    expect(prior.omissions.some(o => o.reason === "no_record" && o.detail.includes("submission:SUB-2026-0001")),
+      `nothing said it searched and found no record: ${JSON.stringify(prior.omissions)}`).toBe(true);
+    // Anything offered here is ANALOGOUS, never a direct hit on the asked
+    // subject -- a direct hit would mean the no_record omission was wrong.
+    for (const i of prior.items) {
+      expect(i.subject, "a direct hit contradicts the no_record omission").not.toBe("submission:SUB-2026-0001");
+      expect(i.tier, "an analogous item must be labelled as precedent").toBe("precedent");
+    }
+  });
+
+  it("a failed lookup reports itself instead of passing for an empty one", async () => {
+    runs.push(run({ teamAgentId: "teamA" }));
+    getTeamBlueprintNodes.mockRejectedValueOnce(new Error("blueprint read exploded"));
+    getDecisionRecordsBySubjects.mockRejectedValueOnce(new Error("storage down"));
+    const prior = await ask({ submission_check: "About SUB-2026-0002" });
+    // Either the resolve throws (lookup_failed) or it degrades internally; what
+    // must never happen is a record that claims a clean empty result.
+    const failed = prior.omissions.some(o => o.reason === "lookup_failed");
+    const degraded = prior.omissions.length > 0;
+    expect(failed || degraded, `a broken lookup recorded nothing: ${JSON.stringify(prior)}`).toBe(true);
+    expect(prior.looked).toBe(true);
+  });
+
+  it("the engine records the look on EVERY step, not only when subjects were found", () => {
+    // The gate that hid three of the four outcomes was in the engine, not here:
+    // `...(priorDecisions.subjects.length ? { priorContext } : {})`.
+    const engine = readFileSync(path.join(__dirname, "..", "server", "dag-execution-engine.ts"), "utf8");
+    expect(engine).toContain("priorContext: priorDecisions,");
+    expect(engine, "the subjects-length gate is back").not.toMatch(/priorDecisions\.subjects\.length \? \{ priorContext/);
   });
 });

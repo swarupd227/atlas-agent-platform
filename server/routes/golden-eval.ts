@@ -54,6 +54,8 @@ interface JudgedCase {
   skillsLoaded: string[];
   /** Built-in tools the agent called while answering: the document and calculation tools its skills grant. */
   toolsUsed?: string[];
+  /** The answer hit EVAL_ANSWER_MAX_TOKENS and was cut off. */
+  truncated?: boolean;
   latencyMs: number;
   /** Set when the case ran more than once (repeats > 1). */
   stability?: CaseStability;
@@ -61,6 +63,35 @@ interface JudgedCase {
 
 /** Tool turns allowed before the agent must answer. */
 const MAX_SKILL_TURNS = 4;
+
+/**
+ * Room for the agent's whole answer. At 1,500 a step that returns a full
+ * structured record -- a WC loss review listing every claim on four prior
+ * policies before its findings -- was cut off before its JSON closed, and the
+ * case was scored "no parseable JSON verdict": a harness limit reported as the
+ * agent's omission. A cut-off answer is now also reported as truncated.
+ */
+export const EVAL_ANSWER_MAX_TOKENS = 4096;
+
+/** The harness's own model, for an agent that does not run on a Claude model. */
+export const EVAL_FALLBACK_MODEL = "claude-opus-4-5";
+
+/**
+ * The model a case is answered with: the agent's own. Every case used to be
+ * answered by claude-opus-4-5 whatever the agent ran on, so a suite for an
+ * agent on claude-sonnet-4-5 scored a model production never calls. This
+ * harness calls Anthropic only, so an agent on another provider still falls
+ * back; the run records which model answered (answeredBy).
+ */
+export function evalAnswerModel(agent: { modelName?: string | null } | null | undefined): string {
+  const name = String(agent?.modelName ?? "").trim();
+  return /^claude-[a-z0-9.-]+$/i.test(name) ? name : EVAL_FALLBACK_MODEL;
+}
+
+/** Said first when an answer hit EVAL_ANSWER_MAX_TOKENS, so a cut-off answer never reads as an omission. */
+export function truncationNote(truncated: boolean | undefined): string {
+  return truncated ? `The agent's answer was cut off at the ${EVAL_ANSWER_MAX_TOKENS}-token answer limit before it finished. ` : "";
+}
 
 /**
  * The agent answers under its own system prompt with read_skill and the
@@ -79,7 +110,9 @@ export async function answerCase(p: {
   readableSkills: Skill[];
   /** Built-in tools to offer and run in-process (builtinToolsForEval); none when absent. */
   builtinTools?: AvailableTool[];
-}): Promise<{ text: string; skillsLoaded: string[]; toolsUsed: string[] }> {
+  /** The model that answers -- evalAnswerModel(agent). */
+  model?: string;
+}): Promise<{ text: string; skillsLoaded: string[]; toolsUsed: string[]; truncated: boolean }> {
   const offered = skillToolsFor(p.readableSkills)[0];
   const builtin = p.builtinTools ?? [];
   const toolDefs: Anthropic.Tool[] = [
@@ -94,10 +127,10 @@ export async function answerCase(p: {
   for (let turn = 0; turn <= MAX_SKILL_TURNS; turn++) {
     const lastTurn = turn === MAX_SKILL_TURNS;
     const response = await createClaudeMessage({
-      model: "claude-opus-4-5",
+      model: p.model ?? EVAL_FALLBACK_MODEL,
       system: p.systemPrompt,
       messages,
-      max_tokens: 1500,
+      max_tokens: EVAL_ANSWER_MAX_TOKENS,
       // Tools stay defined on the last turn (earlier turns hold tool_use
       // blocks) but tool_choice "none" makes the model answer.
       ...(tools ? { tools, ...(lastTurn ? { tool_choice: { type: "none" } as any } : {}) } : {}),
@@ -110,7 +143,7 @@ export async function answerCase(p: {
         .map(b => b.text)
         .join("\n")
         .trim();
-      return { text, skillsLoaded, toolsUsed };
+      return { text, skillsLoaded, toolsUsed, truncated: response.stop_reason === "max_tokens" };
     }
 
     messages.push({ role: "assistant", content: response.content });
@@ -129,7 +162,7 @@ export async function answerCase(p: {
     }
     messages.push({ role: "user", content: results });
   }
-  return { text: "", skillsLoaded, toolsUsed };
+  return { text: "", skillsLoaded, toolsUsed, truncated: false };
 }
 
 /**
@@ -376,16 +409,18 @@ export async function judgeCase(params: {
   orgId?: string | null;
   readableSkills: Skill[];
   builtinTools?: AvailableTool[];
+  model?: string;
 }): Promise<Omit<JudgedCase, "caseId" | "name" | "latencyMs">> {
   // Step 1: the agent answers, under its own real system prompt, able to load
   // its skills on demand.
-  const { text: actualOutput, skillsLoaded, toolsUsed } = await answerCase({
+  const { text: actualOutput, skillsLoaded, toolsUsed, truncated } = await answerCase({
     systemPrompt: params.systemPrompt,
     scenario: params.scenario,
     agentId: params.agentId,
     orgId: params.orgId,
     readableSkills: params.readableSkills,
     builtinTools: params.builtinTools,
+    model: params.model,
   });
 
   // Step 2: each criterion is judged through the decision seam on the site
@@ -468,10 +503,11 @@ ${actualOutput}`,
       score: 0,
       criteriaMet: [],
       criteriaMissed: params.criteria,
-      reasoning: `Judge response could not be parsed (${err?.message}); scored as failed rather than assumed passing.`,
+      reasoning: `${truncationNote(truncated)}Judge response could not be parsed (${err?.message}); scored as failed rather than assumed passing.`,
       actualOutput,
       skillsLoaded,
       toolsUsed,
+      truncated,
     };
   }
 
@@ -483,8 +519,8 @@ ${actualOutput}`,
     (d?.answer === true ? met : missed).push(c);
     if (d?.engine === "jev") byModel.push(`${c} (${d.answer === true ? "met" : "missed"}, ${Math.round(((d.probabilities?.true ?? 0) as number) * 100)}%)`);
   });
-  const reasoning = (examiner as { reasoning: string } | null)?.reasoning
-    || `Decided by the decision model without the examiner: ${byModel.join("; ")}.`;
+  const reasoning = truncationNote(truncated) + ((examiner as { reasoning: string } | null)?.reasoning
+    || `Decided by the decision model without the examiner: ${byModel.join("; ")}.`);
 
   const score = params.criteria.length > 0 ? met.length / params.criteria.length : 0;
   return {
@@ -496,6 +532,7 @@ ${actualOutput}`,
     actualOutput,
     skillsLoaded,
     toolsUsed,
+    truncated,
   };
 }
 
@@ -633,6 +670,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
           orgId,
           readableSkills,
           builtinTools,
+          model: evalAnswerModel(agent),
           scenario: tc.inputScenario,
           expectedBehavior: tc.expectedBehavior,
           criteria,
@@ -665,6 +703,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
         criteriaMet: result.criteriaMet,
         criteriaMissed: result.criteriaMissed,
         judgeReasoning: result.reasoning,
+        truncated: result.truncated ?? false,
         ...repeatedRowNotes(repeats, representativeIndex),
         ...(repeats > 1 ? {
           stability,
@@ -705,6 +744,8 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
         offered: builtinTools.map(t => t.toolName),
         casesThatCalledATool: judged.filter(c => (c.toolsUsed ?? []).length > 0).length,
       },
+      answeredBy: evalAnswerModel(agent),
+      casesTruncated: judged.filter(c => c.truncated).length,
       goldenDatasetId: dataset.id,
       goldenDatasetName: dataset.name,
       ...stabilitySummary,
@@ -816,6 +857,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
         let answerText = "";
         let skillsLoaded: string[] = [];
         let toolsUsed: string[] = [];
+        let truncated = false;
         let scored: ReturnType<typeof scoreStructuredCase>;
         try {
           const answer = await answerCase({
@@ -824,12 +866,15 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
             orgId,
             readableSkills,
             builtinTools,
+            model: evalAnswerModel(agent),
             scenario: `${scenario}\n\nReturn ONLY a JSON object with exactly these keys: ${instrument.keys.join(", ")}. Do not wrap it in prose.`,
           });
           answerText = answer.text;
           skillsLoaded = answer.skillsLoaded;
           toolsUsed = answer.toolsUsed;
+          truncated = answer.truncated;
           scored = scoreStructuredCase(instrument.expected, instrument.keys, answerText);
+          if (truncated) scored = { ...scored, reasoning: truncationNote(true) + scored.reasoning };
         } catch (err: any) {
           scored = {
             passed: false, score: 0, met: [], missed: instrument.keys,
@@ -837,7 +882,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
           };
         }
         return {
-          scored, answerText, skillsLoaded, toolsUsed,
+          scored, answerText, skillsLoaded, toolsUsed, truncated,
           passed: scored.passed, score: scored.score,
           verdict: extractJsonObject(answerText),
           latencyMs: Date.now() - attemptStarted,
@@ -847,13 +892,13 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
       // are checked for a value that changed between attempts. With one
       // attempt this is the attempt's own result, as before.
       const { representative, representativeIndex, score, stability } = foldAttempts(attempts, { keys: instrument.keys, verdict: a => a.verdict });
-      const { scored, answerText, skillsLoaded, toolsUsed } = representative;
+      const { scored, answerText, skillsLoaded, toolsUsed, truncated } = representative;
       const latencyMs = meanLatencyMs(attempts);
       judged.push({
         caseId: tc.id, name: tc.name, latencyMs,
         passed: stability.passed, score,
         criteriaMet: scored.met, criteriaMissed: scored.missed,
-        reasoning: scored.reasoning, actualOutput: answerText, skillsLoaded, toolsUsed,
+        reasoning: scored.reasoning, actualOutput: answerText, skillsLoaded, toolsUsed, truncated,
         ...(repeats > 1 ? { stability } : {}),
       });
       const changed = describeUnstableFields(stability.unstableFields);
@@ -873,6 +918,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
           // "said the wrong thing".
           instrument: "structured_comparison",
           noVerdict: scored.noVerdict,
+          truncated,
           ...repeatedRowNotes(repeats, representativeIndex),
           ...(repeats > 1 ? {
             stability,
@@ -899,6 +945,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
           orgId,
           readableSkills,
           builtinTools,
+          model: evalAnswerModel(agent),
           scenario,
           expectedBehavior: instrument.criterion,
           criteria: [instrument.criterion],
@@ -929,6 +976,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
         criteriaMet: result.criteriaMet,
         criteriaMissed: result.criteriaMissed,
         judgeReasoning: result.reasoning,
+        truncated: result.truncated ?? false,
         ...repeatedRowNotes(repeats, representativeIndex),
         ...(repeats > 1 ? {
           stability,
@@ -967,6 +1015,8 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
       source: "eval_test_cases",
       criteriaSource: "expectedOutput (these cases carry no explicit evaluationCriteria), routed per case to a deterministic field comparison or the prose examiner",
       instruments: byInstrument,
+      answeredBy: evalAnswerModel(agent),
+      casesTruncated: judged.filter(c => c.truncated).length,
       priorContext: { casesWithPriorContext, of: cases.length },
       unjudgeableCases: unjudgeable,
       ...stabilitySummary,
