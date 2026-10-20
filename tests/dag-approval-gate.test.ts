@@ -842,3 +842,93 @@ describe("a gate's precondition", () => {
     expect(raised).toBe(1);
   });
 });
+
+/**
+ * A gate downstream of a step that failed is not raised.
+ *
+ * Live 2026-10-19 (Workers' Comp journey, run 22762715, best_effort): the
+ * class-verification agent timed out, nothing was recorded, and the run still
+ * asked the underwriter to approve the class disposition -- then four more
+ * gates over the same hole. Not opt-in: unlike a precondition, no author means
+ * "ask anyway over a step that produced nothing".
+ */
+describe("a gate downstream of a failed step", () => {
+  const gate = () => node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Underwriter Class Disposition", stateKey: "class_disposition" });
+  const step = (id: string, label: string, extra: Partial<TeamBlueprintNode> = {}) => node({ id, refAgentId: `agent-${id}`, label, stateKey: id, ...extra });
+  const link = (from: string, to: string) => ({
+    id: `${from}-${to}`, blueprintId: "bp1", sourceNodeId: from, targetNodeId: to, label: null, contentPartTypes: [],
+    allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+  } as unknown as TeamBlueprintEdge);
+
+  const runWith = async (nodes: TeamBlueprintNode[], edges: TeamBlueprintEdge[], failing: string[], extra: Record<string, unknown> = {}) => {
+    const { waitForApproval, executeWorkerAgent } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string) => failing.includes(agentId)
+      ? { success: false, output: "", step: { error: "Agent timed out after 180000ms" } }
+      : { success: true, output: JSON.stringify({ findings: 1 }) });
+    const before = (waitForApproval as any).mock.calls.length;
+    const res = await new DAGExecutionEngine().execute({
+      executionPlan: computeWaves(nodes, edges),
+      stateSchema: {}, initialState: {}, errorStrategy: "best_effort",
+      teamAgentId: "team-1", dagRunId: "run-hole-1", ...extra,
+    });
+    (executeWorkerAgent as any).mockReset();
+    return { res, raised: (waitForApproval as any).mock.calls.length - before };
+  };
+
+  it("does not ask anyone when a step feeding it failed, says which step and why, and halts the run", async () => {
+    const { res, raised } = await runWith(
+      [step("verify", "Verify Class Assignment"), gate()],
+      [link("verify", "gate-1")],
+      ["agent-verify"],
+    );
+    expect(raised).toBe(0);
+    expect(res.success).toBe(false);
+    const g = res.waveResults.flatMap((w) => w.nodes).find((n) => n.nodeId === "gate-1");
+    expect(g?.status).toBe("failed");
+    expect(g?.error).toContain('"Underwriter Class Disposition" was not raised');
+    expect(g?.error).toContain('"Verify Class Assignment" failed (Agent timed out after 180000ms)');
+  });
+
+  it("looks past the gate's direct input: a failure two steps back still stops it", async () => {
+    const { raised, res } = await runWith(
+      [step("verify", "Verify Class Assignment"), step("summary", "Summarize Findings"), gate()],
+      [link("verify", "summary"), link("summary", "gate-1")],
+      ["agent-verify"],
+    );
+    expect(raised).toBe(0);
+    expect(res.success).toBe(false);
+  });
+
+  it("does not run what lies past the gate", async () => {
+    const { res } = await runWith(
+      [step("verify", "Verify Class Assignment"), gate(), step("record", "Record Class Acceptance")],
+      [link("verify", "gate-1"), link("gate-1", "record")],
+      ["agent-verify"],
+    );
+    expect(res.waveResults.flatMap((w) => w.nodes).find((n) => n.nodeId === "record")?.status).not.toBe("completed");
+  });
+
+  it("asks as normal when the failed step has a fallback output its author chose", async () => {
+    const { raised } = await runWith(
+      [step("verify", "Verify Class Assignment", { fallbackOutput: { findings: 0, note: "verification unavailable" } as any }), gate()],
+      [link("verify", "gate-1")],
+      ["agent-verify"],
+    );
+    expect(raised).toBe(1);
+  });
+
+  it("asks as normal when the failure is on a branch that does not feed it", async () => {
+    const { raised } = await runWith(
+      [step("verify", "Verify Class Assignment"), step("notify", "Notify Broker"), gate()],
+      [link("verify", "gate-1")],
+      ["agent-notify"],
+    );
+    expect(raised).toBe(1);
+  });
+
+  it("asks as normal when everything feeding it completed", async () => {
+    const { raised } = await runWith([step("verify", "Verify Class Assignment"), gate()], [link("verify", "gate-1")], []);
+    expect(raised).toBe(1);
+  });
+});

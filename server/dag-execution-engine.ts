@@ -810,6 +810,49 @@ export function revisionFraming(
 }
 
 /**
+ * The steps feeding a gate -- directly or further back -- that failed and left
+ * nothing in their place. A step with a fallbackOutput is not counted: its
+ * author decided what stands in for it. Nor is a skipped step, which is a
+ * route the run did not take, not a hole in the work.
+ *
+ * A person must not be asked to decide on work that does not exist. Under
+ * best_effort a failed step lets the run carry on, and a gate downstream of it
+ * was raised all the same. Live 2026-10-19 (Workers' Comp journey, run
+ * 22762715): the class-verification agent timed out, so no classification
+ * finding was ever recorded, and the run still asked the underwriter to
+ * approve the class disposition, then the memo, the referral, the sign-off
+ * and the bind -- each one approved over the same hole.
+ */
+export function failedGateInputs(
+  nodeId: string,
+  plan: Pick<ComputedWavePlan, "edgeMap" | "nodeConfig">,
+  outcomes: ReadonlyMap<string, { status: string; error?: string }>,
+): Array<{ nodeId: string; label: string; error: string }> {
+  if (outcomes.size === 0) return [];
+  const reverse: Record<string, string[]> = {};
+  for (const [source, targets] of Object.entries(plan.edgeMap)) {
+    for (const target of targets) (reverse[target] ??= []).push(source);
+  }
+  const ancestors = new Set<string>();
+  const queue = [...(reverse[nodeId] ?? [])];
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    if (ancestors.has(id) || id === nodeId) continue;
+    ancestors.add(id);
+    queue.push(...(reverse[id] ?? []));
+  }
+  const holes: Array<{ nodeId: string; label: string; error: string }> = [];
+  for (const id of Array.from(ancestors)) {
+    const outcome = outcomes.get(id);
+    if (outcome?.status !== "failed") continue;
+    const nc = plan.nodeConfig[id];
+    if (nc?.fallbackOutput != null) continue;
+    holes.push({ nodeId: id, label: nc?.label || id, error: outcome.error || "it failed" });
+  }
+  return holes;
+}
+
+/**
  * Upstream work a node was NOT given, and must not assume it was.
  *
  * When a node fails, its state key is simply absent from shared state. There
@@ -2340,7 +2383,7 @@ export class DAGExecutionEngine {
     }
 
     if (this.isGateNode(nc)) {
-      return this.executeGateNode(nodeId, nc, currentState, config, start);
+      return this.executeGateNode(nodeId, nc, currentState, config, start, nodeOutcomes);
     }
 
     if (nc.refTeamAgentId) {
@@ -3282,6 +3325,7 @@ export class DAGExecutionEngine {
     currentState: Record<string, any>,
     config: DAGExecutionConfig,
     start: number,
+    nodeOutcomes: ReadonlyMap<string, { status: string; error?: string }> = new Map(),
   ): Promise<NodeExecutionResult> {
     // Human decision time, not LLM-call time -- the generic 30s node default
     // (meant for LLM timeouts) would expire a gate almost immediately, so a
@@ -3503,6 +3547,38 @@ export class DAGExecutionEngine {
       subject || `What it has done so far:\n${context.slice(0, 4000)}`,
       otherContext ? `\n--- Everything else from this run ---\n${otherContext}` : undefined,
     ].filter((p) => p !== undefined).join("\n");
+
+    // --- nobody is asked to decide on work that failed (failedGateInputs) ---
+    //
+    // Not opt-in, unlike the precondition below: no author means "ask anyway
+    // over a step that produced nothing". Halts with its own reason, like an
+    // unmet precondition, and is never routed down a decline branch -- nobody
+    // declined anything. A gate already raised before a resume keeps its
+    // place: the person was asked, and this does not take that back.
+    const holes = config.resumePendingApprovalId ? [] : failedGateInputs(nodeId, config.executionPlan, nodeOutcomes);
+    if (holes.length > 0) {
+      const why = `"${nc.label || "Approval Gate"}" was not raised: ${holes.map((h) => `"${h.label}" failed (${h.error.slice(0, 200)})`).join("; ")}. `
+        + `Nobody was asked to decide on work that does not exist; re-run from the failed step.`;
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "system",
+        action: "approval_gate_upstream_failed",
+        objectType: "dag_execution_run",
+        objectId: config.dagRunId ?? nodeId,
+        details: JSON.stringify({ gate: nc.label, nodeId, failedSteps: holes }),
+      } as never).catch(() => {});
+      return {
+        nodeId,
+        agentId: "",
+        status: "failed" as const,
+        output: {},
+        error: why,
+        traceId: "",
+        durationMs: Date.now() - start,
+        promptTokens: 0,
+        completionTokens: 0,
+      };
+    }
 
     // --- what must hold before a person is asked at all ---
     //
