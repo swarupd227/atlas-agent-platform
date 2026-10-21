@@ -24,6 +24,13 @@ vi.mock("../server/agent-runtime", () => ({
     return state;
   },
 }));
+// Each agent node reads the INTELLIGENCE_CONTEXT platform setting before it
+// calls its worker. Unmocked, that was a real database read: it made the test
+// depend on a row in whatever database .env named, and its per-node latency
+// is what shuffled the start order of the two wave-1 nodes.
+vi.mock("../server/storage", () => ({
+  storage: { getPlatformSetting: vi.fn(async () => undefined) },
+}));
 
 function node(overrides: Partial<TeamBlueprintNode>): TeamBlueprintNode {
   return {
@@ -69,7 +76,13 @@ describe("DAGExecutionEngine early admission", () => {
       onWaveComplete: async (w) => { waveCompletes.push(w); },
     });
     // Let search, then record, then screen run to completion while the orchestrator hangs.
-    await vi.waitFor(() => expect(started).toEqual(["ag-orch", "ag-search", "ag-record", "ag-screen"]));
+    await vi.waitFor(() => expect(started).toContain("ag-screen"));
+    // Orchestrator and search start concurrently in wave 1, so their relative
+    // order is not part of the contract; that record follows search, and screen
+    // follows record, is.
+    expect(started).toHaveLength(4);
+    expect(new Set(started.slice(0, 2))).toEqual(new Set(["ag-orch", "ag-search"]));
+    expect(started.slice(2)).toEqual(["ag-record", "ag-screen"]);
     expect(waveCompletes).toEqual([]); // wave 1 is still open: the orchestrator has not finished
     orch.resolve({ success: true, output: "plan done" });
     const result = await run;
