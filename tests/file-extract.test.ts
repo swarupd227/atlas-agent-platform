@@ -59,6 +59,41 @@ async function buildPptx(): Promise<Buffer> {
   return zip.generateAsync({ type: "nodebuffer" });
 }
 
+/**
+ * A real PDF whose pages carry no text operators at all -- what a scan looks
+ * like to a reader, minus the megabyte of scanned pixels.
+ *
+ * Built here rather than checked in for the reason the OOXML builders above
+ * give: every byte an assertion depends on should be readable in the diff. The
+ * pages have no /Contents, so there is nothing for the reader to extract,
+ * which is the condition the code under test keys on ("every page silent").
+ */
+function buildTextlessPdf(pageCount: number): Buffer {
+  const objects: string[] = [
+    "<</Type/Catalog/Pages 2 0 R>>",
+    `<</Type/Pages/Kids[${Array.from({ length: pageCount }, (_, i) => `${i + 3} 0 R`).join(" ")}]/Count ${pageCount}>>`,
+    ...Array.from({ length: pageCount }, () => "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>"),
+  ];
+
+  let body = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((obj, i) => {
+    offsets.push(body.length);
+    body += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+
+  // A correct xref table: pdf.js can often recover without one, and a test
+  // that leaned on that recovery would be testing the recovery path instead of
+  // the extraction. Each entry is exactly 20 bytes, as the spec requires.
+  const startxref = body.length;
+  const size = objects.length + 1;
+  let xref = `xref\n0 ${size}\n0000000000 65535 f \n`;
+  for (const off of offsets) xref += `${String(off).padStart(10, "0")} 00000 n \n`;
+  body += `${xref}trailer\n<</Size ${size}/Root 1 0 R>>\nstartxref\n${startxref}\n%%EOF\n`;
+
+  return Buffer.from(body, "latin1");
+}
+
 describe("isSupportedFile", () => {
   it("accepts the office and text formats users actually upload", () => {
     for (const f of ["a.pdf", "a.docx", "a.xlsx", "a.xlsm", "a.pptx", "a.csv", "a.txt", "a.md", "a.json"]) {
@@ -353,5 +388,50 @@ describe("Office archives cannot expand without a limit", () => {
     const bomb = lyingOfficeZip(Buffer.alloc(8_000, 0x41), 16);
     await expect(extractTextFromFile(bomb, undefined, name, { zipLimits: { maxEntries: 10, maxEntryBytes: 100, maxExpandedBytes: 50_000 } }))
       .rejects.toBeInstanceOf(ZipLimitError);
+  });
+});
+
+/**
+ * A PDF with no text layer must extract to "", not to the reader's bookkeeping.
+ *
+ * This is the regression that made capability 2 inert in production. pdf-parse
+ * assembles its own `text` with "-- 1 of 6 --" markers between pages, so a scan
+ * came back as a short non-empty string rather than nothing. Everything
+ * downstream asks "is there text here?" by looking at that string: the run
+ * descriptor reported `readable: true`, `readBy: "text"` and no unreadable
+ * note, and the vision path -- gated on there being no text -- was never
+ * entered. Measured on a real image-only PDF: 16 characters, all punctuation.
+ */
+describe("a PDF with no text layer", () => {
+  it("extracts to nothing, not to the reader's page markers", async () => {
+    const r = await extractTextFromFile(buildTextlessPdf(1), "application/pdf", "scan.pdf");
+
+    expect(r.text).toBe("");
+    // The specific string that shipped. Named explicitly because an assertion
+    // on length alone would pass again the moment a reader invents a different
+    // preamble of its own.
+    expect(r.text).not.toContain("-- 1 of 1 --");
+    expect(r.meta?.empty).toBe(true);
+    expect(r.meta?.needsVision).toBe(true);
+    expect(r.meta?.pages).toBe(1);
+  });
+
+  it("says so for a multi-page scan too, where there is a marker per page", async () => {
+    const r = await extractTextFromFile(buildTextlessPdf(6), "application/pdf", "scan.pdf");
+
+    expect(r.text).toBe("");
+    expect(r.meta?.pages).toBe(6);
+    expect(r.meta?.needsVision).toBe(true);
+    // Six blank pages are still six pages: the count a step is told must come
+    // from the document, not from how much text came out of it.
+    expect(r.sections).toHaveLength(6);
+  });
+
+  it("does not claim a PDF that HAS text needs vision", async () => {
+    // Guards the other direction: the fix must not make every PDF look scanned.
+    const r = await extractTextFromFile(await buildPptx(), undefined, "deck.pptx");
+
+    expect(r.meta?.needsVision).toBeUndefined();
+    expect(r.text.length).toBeGreaterThan(0);
   });
 });

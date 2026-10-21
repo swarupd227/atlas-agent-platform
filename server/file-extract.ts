@@ -1173,14 +1173,28 @@ export async function extractTextFromFile(
   if (ext === "pdf" || mime === "application/pdf") {
     const pdf = await extractPdf(buffer);
     const { kept, coverage } = keepSections(pdf.pages, "page");
-    const text = coverage.complete
-      ? pdf.text
-      : kept.map((p) => `${p.text}\n-- ${p.locator.page} of ${pdf.total} --`).join("\n") + truncationNotice(coverage);
     // Every page silent means the text is in the pixels. Recorded here, where
     // the reader already knows, rather than inferred later from an empty
     // string -- a caller seeing "" cannot tell a scan from a blank file, and
     // only one of those is worth rendering.
     const noTextAnywhere = kept.every((p) => !p.text.trim());
+    // A scan's text is "", not pdf-parse's page markers.
+    //
+    // `pdf.text` is the reader's own assembly, and for a PDF with no text layer
+    // it is NOT empty: it still carries the "-- 1 of 6 --" markers between the
+    // pages, so a one-page scan comes back as 16 characters of punctuation.
+    // Those are this reader's bookkeeping, not the document's content, and
+    // handing them on makes a scan look readable to everything downstream --
+    // `readable: true`, `readBy: "text"`, no unreadable note, and the vision
+    // path (which fires only when there is no text) never reached at all.
+    // Measured on a real image-only PDF before this line existed:
+    // `{textLength: 16, meta: {empty: true, needsVision: true}}` and vision
+    // skipped. A caller asking "is there text here" deserves "no".
+    const text = noTextAnywhere
+      ? ""
+      : coverage.complete
+        ? pdf.text
+        : kept.map((p) => `${p.text}\n-- ${p.locator.page} of ${pdf.total} --`).join("\n") + truncationNotice(coverage);
     return {
       text,
       kind: "pdf",

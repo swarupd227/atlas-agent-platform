@@ -1360,6 +1360,30 @@ class AnthropicProvider implements LLMProvider {
         continue;
       }
 
+      // Images with no container, which is what a scanned run document is.
+      //
+      // The branch above was the only place image blocks were ever emitted,
+      // and it needs BOTH container attachments and code execution configured.
+      // A scanned document has neither: server/document-vision.ts uploads page
+      // images and sets only attachmentImageFileIds, on an ordinary text-only
+      // worker. So the pages fell through to the plain-text push below, which
+      // drops them -- the render ran, the upload ran, the ids were carried all
+      // the way here, and the model was sent the text alone.
+      //
+      // Checked against the API before writing this: a file-source image block
+      // needs no anthropic-beta header, so this path sends none. A real scan
+      // was read correctly both with and without it.
+      if (m.role === "user" && m.attachmentImageFileIds?.length) {
+        anthropicMessages.push({
+          role: "user",
+          content: [
+            ...m.attachmentImageFileIds.map((file_id) => ({ type: "image" as const, source: { type: "file" as const, file_id } })),
+            { type: "text" as const, text: m.content },
+          ] as any,
+        });
+        continue;
+      }
+
       anthropicMessages.push({ role: m.role as "user" | "assistant", content: m.content });
     }
 
@@ -1590,6 +1614,21 @@ class AnthropicProvider implements LLMProvider {
           content: [
             ...(m.attachmentImageFileIds ?? []).map((file_id) => ({ type: "image" as const, source: { type: "file" as const, file_id } })),
             ...m.attachmentFileIds.map((file_id) => ({ type: "container_upload" as const, file_id })),
+            { type: "text" as const, text: m.content },
+          ] as any,
+        });
+        continue;
+      }
+
+      // Images with no container -- a scanned run document. Mirrors the branch
+      // of the same name in complete(); see the reasoning there. Both paths
+      // need it: a worker streams, so without this copy a scan would read
+      // correctly in one place and be silently dropped in the other.
+      if (m.role === "user" && m.attachmentImageFileIds?.length) {
+        anthropicMessages.push({
+          role: "user",
+          content: [
+            ...m.attachmentImageFileIds.map((file_id) => ({ type: "image" as const, source: { type: "file" as const, file_id } })),
             { type: "text" as const, text: m.content },
           ] as any,
         });

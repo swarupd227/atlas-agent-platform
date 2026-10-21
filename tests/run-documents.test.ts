@@ -494,6 +494,65 @@ describe("a scanned document, read by vision", () => {
     expect(documents[0].readable).toBe(false);
     expect(state.visionCalls).toHaveLength(0);  // no needsVision, no render
   });
+
+  /**
+   * The rows already in the database.
+   *
+   * Every case above passes `extractedText: ""`, and the extractor now really
+   * does return that for a scan -- but it did not when those rows were
+   * written. It stored pdf-parse's page markers, so a scan sits in the
+   * database as "-- 1 of 1 --": twelve characters, non-empty, no text. That
+   * string is why vision never fired in production, and these tests could not
+   * have caught it, because the shape they assert on is one the pipeline did
+   * not produce.
+   *
+   * So this is also the reason the descriptor asks `meta.empty` rather than
+   * measuring the string: it is the only question that is true for both the
+   * rows written before the fix and the ones written after.
+   */
+  const MARKER_ONLY = "-- 1 of 1 --";
+
+  it("renders a scan whose stored text is only the reader's page markers", async () => {
+    state.files.set("f-scan", scan({ extractedText: MARKER_ONLY, extractMeta: { pages: 1, empty: true, needsVision: true } }));
+    state.visionResult = { fileIds: ["fa-1"], shown: 1, total: 1 };
+
+    const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
+    const d = documents[0];
+
+    expect(state.visionCalls).toHaveLength(1);   // the gate opened at all
+    expect(d.readBy).toBe("vision");
+    expect(d.readable).toBe(true);
+    // Not 12. The markers are the reader's bookkeeping, and a step told the
+    // document holds 12 characters would believe it had been given something.
+    expect(d.chars).toBe(0);
+    expect(d.note).toContain("no text layer");
+  });
+
+  it("does not report marker-only text as a readable document", async () => {
+    state.files.set("f-scan", scan({ extractedText: MARKER_ONLY, extractMeta: { pages: 1, empty: true, needsVision: true } }));
+    state.visionResult = null;                   // and vision could not rescue it
+
+    const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
+    const d = documents[0];
+
+    // What shipped: readable true, readBy "text", chars 12, and no note at all.
+    expect(d.readable).toBe(false);
+    expect(d.readBy).toBeUndefined();
+    expect(d.chars).toBe(0);
+    expect(d.note).toMatch(/scan or an image-only PDF/);
+  });
+
+  it("tells the step it could not be read, rather than handing it the markers", async () => {
+    state.files.set("f-scan", scan({ extractedText: MARKER_ONLY, extractMeta: { pages: 1, empty: true, needsVision: true } }));
+    state.visionResult = null;
+
+    const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
+    const { text: context } = await buildRunDocumentContext(documents, "org-1");
+
+    expect(context).toContain("could NOT be read");
+    expect(context).not.toContain(MARKER_ONLY);
+    expect(state.attachmentCalls).toHaveLength(0);  // nothing to inline
+  });
 });
 
 /**

@@ -136,6 +136,20 @@ export async function resolveRunDocuments(
     const meta = (row.extractMeta as Record<string, unknown> | null) ?? {};
     const pages = typeof meta.pages === "number" ? meta.pages : undefined;
 
+    // A non-empty string is NOT the same as the document having text.
+    //
+    // The extractor now returns "" for a PDF whose every page is blank, but
+    // this used to read `text.length > 0` and a scan arrived here as the
+    // reader's page markers -- "-- 1 of 1 --", 12 characters after trimming.
+    // Every field below keyed off that length, so a scan reported
+    // `readable: true`, `readBy: "text"`, `chars: 12` and NO note, and the
+    // vision gate (`!text`) never opened. Rows extracted before that fix still
+    // hold the marker string, so asking `meta.empty` rather than the length is
+    // what makes this true for them too -- and it cannot silently re-break if
+    // some future reader decides to prepend something of its own.
+    const hasText = text.length > 0 && meta.empty !== true;
+    const chars = hasText ? text.length : 0;
+
     // Two different events, and the descriptor used to report only the first.
     //
     // `meta.truncated` is the EXTRACTOR hitting its ceiling. A step is also
@@ -150,9 +164,9 @@ export async function resolveRunDocuments(
     // anything downstream is really asking. Which of the two cuts happened is
     // in `note`, and `charsShown` gives the size of what arrived.
     const extractorCut = meta.truncated === true;
-    const stepCut = text.length > RUN_DOCUMENT_PREVIEW_CHARS;
+    const stepCut = chars > RUN_DOCUMENT_PREVIEW_CHARS;
     const truncated = extractorCut || stepCut;
-    const charsShown = Math.min(text.length, RUN_DOCUMENT_PREVIEW_CHARS);
+    const charsShown = Math.min(chars, RUN_DOCUMENT_PREVIEW_CHARS);
 
     // A PDF with no text layer: render its pages and show them to the model
     // instead. Done HERE, at run setup, rather than when a step's prompt is
@@ -163,7 +177,7 @@ export async function resolveRunDocuments(
     // A failure returns null and the document stays honestly unreadable --
     // which is what this platform did before vision existed, so nothing that
     // worked stops working.
-    const vision = meta.needsVision === true && !text
+    const vision = meta.needsVision === true && !hasText
       ? await visionPagesFor((row as { content?: Buffer | null }).content ?? null, row.filename)
       : null;
     // The extractor already says what it left out and in what unit -- "6 of 18
@@ -176,22 +190,22 @@ export async function resolveRunDocuments(
       filename: row.filename,
       kind: row.kind ?? null,
       sizeBytes: row.sizeBytes ?? null,
-      chars: text.length,
+      chars,
       // Vision makes an unreadable document readable: the step really can work
       // from it, and a rule testing `readable == false` to mean "I cannot use
       // this" would be wrong to still fire.
-      readable: text.length > 0 || !!vision,
+      readable: hasText || !!vision,
       truncated,
-      ...(charsShown < text.length ? { charsShown } : {}),
+      ...(charsShown < chars ? { charsShown } : {}),
       ...(pages ? { pages } : {}),
-      ...(vision ? { readBy: "vision" as const, pagesShown: vision.shown } : text.length > 0 ? { readBy: "text" as const } : {}),
+      ...(vision ? { readBy: "vision" as const, pagesShown: vision.shown } : hasText ? { readBy: "text" as const } : {}),
       ...(vision
         ? { note: visionNote(vision) }
-        : text.length === 0
+        : !hasText
         ? { note: UNREADABLE_NOTE }
         : stepCut
           ? {
-            note: `Only the first ${charsShown.toLocaleString("en-US")} of ${text.length.toLocaleString("en-US")} characters are given to this step` +
+            note: `Only the first ${charsShown.toLocaleString("en-US")} of ${chars.toLocaleString("en-US")} characters are given to this step` +
               `${extractorCut ? ", and the reader had already stopped short of the end of the file" : ""}. ` +
               `Anything later in the document was not shown: do not conclude it is absent.`,
           }
