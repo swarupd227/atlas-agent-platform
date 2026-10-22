@@ -68,6 +68,9 @@ import retail365KycRouter, { teamsRouter as retail365TeamsRouter } from "./mock-
 import mgaOversightDataRouter from "./mock-mcp/mga-oversight-data";
 import mgaOversightActionsRouter from "./mock-mcp/mga-oversight-actions";
 import surplusLinesComplianceRouter from "./mock-mcp/surplus-lines-compliance";
+import mbMortgageLosRouter from "./mock-mcp/mb-mortgage-los";
+import mbLoanDocumentsRouter from "./mock-mcp/mb-loan-documents";
+import mbGuidelinesRouter from "./mock-mcp/mb-guidelines";
 import wcWorkbenchRouter from "./mock-mcp/wc-workbench";
 import wcClassBureauRouter from "./mock-mcp/wc-class-bureau";
 import insurityWcRatingRouter from "./mock-mcp/insurity-wc-rating";
@@ -383,6 +386,10 @@ export async function registerRoutes(
   app.use("/api/mock/mga-oversight-data", mgaOversightDataRouter);
   app.use("/api/mock/mga-oversight-actions", mgaOversightActionsRouter);
   app.use("/api/mock/surplus-lines-compliance", surplusLinesComplianceRouter);
+  // Mutual Bancorp mortgage file to clear-to-close (fixture mode): one seed, three systems.
+  app.use("/api/mock/mb-mortgage-los", mbMortgageLosRouter);
+  app.use("/api/mock/mb-loan-documents", mbLoanDocumentsRouter);
+  app.use("/api/mock/mb-guidelines", mbGuidelinesRouter);
   // Workers' Compensation underwriting (fixture mode): one seed, five systems.
   app.use("/api/mock/wc-workbench", wcWorkbenchRouter);
   app.use("/api/mock/wc-class-bureau", wcClassBureauRouter);

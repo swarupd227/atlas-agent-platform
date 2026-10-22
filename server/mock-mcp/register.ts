@@ -1,5 +1,6 @@
 import { storage } from "../storage";
 import { wcServerDefinitions } from "./wc-register";
+import { mbMortgageServerDefinitions } from "./mb-mortgage-register";
 
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
@@ -20,6 +21,7 @@ interface MockMcpServerDef {
 function getServerDefinitions(): MockMcpServerDef[] {
   return [
     ...wcServerDefinitions(BASE_URL),
+    ...mbMortgageServerDefinitions(BASE_URL),
     {
       name: "Global Watchlist Screening Service",
       description: "Simulated sanctions and terrorism watchlist screening service. Screens individuals and organizations against OFAC SDN, OFAC Consolidated, UN, EU, UK HM Treasury and FBI terrorism lists, returning a clear / potential match / match / pending verdict with the matched and unmatched identifiers, the lists checked and their versions, and the screening timestamp. Deterministic: the same party always returns the same verdict.",
