@@ -1,7 +1,7 @@
 import { Router, type Response } from "express";
 import {
   BANKS, FACILITIES, FIXTURE_NOTICE, MODE, POLICIES, REVIEW_DATE, TENANT_ID,
-  citationExists, documentById, documentIdsFor, facilityById, now, publicFacility, RENT_ROLLS, type BankId, type Facility,
+  citationExists, documentIdsFor, facilityById, now, publicFacility, resolveDocCitation, type BankId, type Facility,
 } from "./mbcre-seed";
 import { creBook, list, logCre, nextCreId, resetCreState, reviewOf, type ReviewState } from "./mbcre-state";
 
@@ -61,34 +61,43 @@ function person(b: Record<string, any>, res: Response, roles: string[]): { actor
   return { actorId, actorRole, approvalId };
 }
 
-/** Resolve one memo/spread source: a document cell, a loan-system field, or a policy field. */
-function sourceValue(raw: string, f: Facility): { ok: boolean; value?: number } {
+/**
+ * Walk a dotted path through a record. An array step is matched by the id an
+ * element carries (covenantId, grade, ref), so LS:<fac>.covenants.<covenantId>.threshold
+ * and POL:<bank>.ratingScale.<grade>.maxLtv name one element, not an index.
+ */
+function walk(root: unknown, path: string): unknown {
+  return path.split(".").reduce((o: any, k) => {
+    if (o == null) return undefined;
+    if (Array.isArray(o)) return o.find((e) => e && [e.covenantId, e.grade, e.ref].some((id) => String(id).toUpperCase() === k.toUpperCase()));
+    return o[k];
+  }, root);
+}
+
+type Resolved = { ok: false } | { ok: true; value?: number | string };
+
+/** Resolve one memo/spread source: a document citation, a loan-system field, or a policy field. */
+function sourceValue(raw: string, f: Facility): Resolved {
   const s = raw.trim();
-  if (citationExists(s)) {
-    const m = s.toUpperCase().match(/^([A-Z0-9-]+)!([LR]\d{2})(?:@(.+))?$/)!;
-    const d = documentById(m[1]);
-    if (d) {
-      if (d.facilityId !== f.facilityId) return { ok: false };
-      const line = d.lines.find((l) => l.ref === m[2])!;
-      const periods = Object.keys(line.values);
-      const period = m[3] ? periods.find((p) => p.toUpperCase() === m[3].trim()) : periods.length === 1 ? periods[0] : undefined;
-      return { ok: true, value: period ? line.values[period] : undefined };
-    }
-    const rr = RENT_ROLLS[m[1]];
-    if (rr.facilityId !== f.facilityId) return { ok: false };
-    return { ok: true, value: rr.rows.find((r) => r.ref === m[2])!.annualBaseRent };
-  }
-  const ls = s.match(/^LS:([A-Z0-9-]+)\.([a-zA-Z.]+)$/);
+  const doc = resolveDocCitation(s);
+  if (doc.ok) return doc.facilityId === f.facilityId ? { ok: true, value: doc.value } : { ok: false };
+  const ls = s.match(/^LS:([A-Za-z0-9-]+)\.([A-Za-z0-9.+_-]+)$/);
   if (ls && ls[1].toUpperCase() === f.facilityId) {
-    const v = ls[2].split(".").reduce((o: any, k) => (o == null ? undefined : o[k]), f as any);
-    return typeof v === "number" ? { ok: true, value: v } : { ok: false };
+    const v = walk(f, ls[2]);
+    return typeof v === "number" || typeof v === "string" ? { ok: true, value: v } : { ok: false };
   }
-  const pol = s.match(/^POL:(CC5|FID|BLU)\.([a-zA-Z.]+)$/);
+  const pol = s.match(/^POL:(CC5|FID|BLU)\.([A-Za-z0-9.+_-]+)$/);
   if (pol && pol[1] === f.bankId) {
-    const v = pol[2].split(".").reduce((o: any, k) => (o == null ? undefined : o[k]), POLICIES[pol[1] as BankId] as any);
-    return typeof v === "number" ? { ok: true, value: v } : { ok: false };
+    const v = walk(POLICIES[pol[1] as BankId], pol[2]);
+    return typeof v === "number" || typeof v === "string" ? { ok: true, value: v } : { ok: false };
   }
   return { ok: false };
+}
+
+/** A figure matches its single source: numbers within half a unit, text and dates exactly (case and spacing aside). */
+function sameValue(source: number | string, stated: unknown): boolean {
+  if (typeof source === "number") return Number.isFinite(Number(stated)) && Math.abs(source - Number(stated)) <= 0.5;
+  return String(stated ?? "").trim().toLowerCase() === source.trim().toLowerCase();
 }
 
 const received = (r: ReviewState, ref: string) => r.documentsReceived.includes(ref.split("!")[0].trim().toUpperCase());
@@ -162,7 +171,8 @@ router.post("/spread", (req, res) => {
     if (!citationExists(ref) || !received(r, ref)) { problems.push(`${l.line}: "${ref}" is not a cell of a document received for ${f.facilityId}. Cite <documentId>!<line>@<period>.`); continue; }
     const src = sourceValue(ref, f);
     if (!src.ok) { problems.push(`${l.line}: "${ref}" belongs to another facility.`); continue; }
-    if (src.value !== undefined && Math.abs(src.value - Number(l.value)) > 0.5 && !String(l?.adjustment ?? "").trim()) problems.push(`${l.line}: value ${l.value} does not match ${ref} (${src.value}). Copy the cell, or mark the line as an adjustment with the reason.`);
+    if (typeof src.value === "string") { problems.push(`${l.line}: "${ref}" is text (${src.value}), not an amount; a spread line cites a numeric cell.`); continue; }
+    if (src.value !== undefined && !sameValue(src.value, l.value) && !String(l?.adjustment ?? "").trim()) problems.push(`${l.line}: value ${l.value} does not match ${ref} (${src.value}). Copy the cell, or mark the line as an adjustment with the reason.`);
   }
   if (!lines.length) problems.push("lines is required.");
   if (problems.length) return res.status(422).json(envelope({ error: "Spread not recorded.", problems }));
@@ -223,11 +233,16 @@ router.post("/memo", (req, res) => {
   const missingSections = required.filter((s) => !String(sections[s] ?? "").trim());
   const checked = figures.map((x: any) => {
     const refs = list(x?.sourceRefs ?? x?.sourceRef);
-    const resolved = refs.map((ref) => ({ ref, ...sourceValue(ref, f), receivedOk: !citationExists(ref) || received(r, ref) }));
-    const single = resolved.length === 1 ? resolved[0] : null;
-    const valueMatches = !single || single.value === undefined || Math.abs(single.value - Number(x?.value)) <= 0.5 || !!x?.derived;
-    const traced = refs.length > 0 && resolved.every((z) => z.ok && z.receivedOk) && valueMatches;
-    return { label: String(x?.label ?? ""), value: Number(x?.value), sourceRef: refs.join(", "), traced };
+    const stated = typeof x?.value === "number" || typeof x?.value === "string" ? x.value : null;
+    const out = { label: String(x?.label ?? ""), value: stated, sourceRef: refs.join(", ") };
+    if (!refs.length) return { ...out, traced: false, reason: "No source cited." };
+    for (const ref of refs) {
+      if (!sourceValue(ref, f).ok) return { ...out, traced: false, reason: `"${ref}" is not a source of ${f.facilityId}. Forms: <statementId>!<line>@<period>, <rentRollId>!<row>[.<field>], <rentRollId>!gla, LS:${f.facilityId}.<field>, POL:${f.bankId}.<field>.` };
+      if (citationExists(ref) && !received(r, ref)) return { ...out, traced: false, reason: `${ref.split("!")[0]} has not been received.` };
+    }
+    const single = refs.length === 1 && !x?.derived ? sourceValue(refs[0], f) : null;
+    if (single?.ok && single.value !== undefined && !sameValue(single.value, stated)) return { ...out, traced: false, reason: `Stated ${stated} but ${refs[0]} is ${single.value}. Correct the figure, or mark it derived and list every source it is computed from.` };
+    return { ...out, traced: true };
   });
   const tracedPct = checked.length ? Math.round(1000 * checked.filter((x: any) => x.traced).length / checked.length) / 10 : 0;
   const version = r.memos.length + 1;

@@ -374,19 +374,44 @@ export const documentIdsFor = (facilityId: string): string[] => [
   ...Object.values(RENT_ROLLS).filter((r) => r.facilityId === facilityId).map((r) => r.documentId),
 ];
 
-/** Every cell a spread or memo may cite: <documentId>!<lineRef>[@<period>] for statements, <documentId>!<rowRef> for rent rolls. */
-export function citationExists(raw: unknown): boolean {
-  const m = String(raw ?? "").trim().toUpperCase().match(/^([A-Z0-9-]+)!([LR]\d{2})(?:@(.+))?$/);
-  if (!m) return false;
-  const [, docId, ref, period] = m;
+const RENT_ROW_FIELDS = ["tenant", "suite", "sqft", "annualBaseRent", "leaseStart", "leaseExpiry", "status"] as const;
+const RENT_ROLL_FIELDS = ["gla", "asOf"] as const;
+
+/**
+ * Resolve a document citation to the value it names. The forms:
+ *   <statementId>!<line>@<period>   a statement cell (the period may be omitted when the line has one)
+ *   <rentRollId>!<row>              a rent roll row's annual base rent
+ *   <rentRollId>!<row>.<field>      a row field: tenant, suite, sqft, annualBaseRent, leaseStart, leaseExpiry, status
+ *   <rentRollId>!<field>            a rent roll field: gla, asOf
+ * The value is a number or a string (dates, names), or undefined when the citation names a line but no single period.
+ */
+export function resolveDocCitation(raw: unknown): { ok: false } | { ok: true; facilityId: string; documentId: string; value: number | string | undefined } {
+  const m = String(raw ?? "").trim().match(/^([A-Za-z0-9-]+)!([A-Za-z0-9]+)(?:\.([A-Za-z]+))?(?:@(.+))?$/);
+  if (!m) return { ok: false };
+  const docId = m[1].toUpperCase();
+  const [, , ref, field, period] = m;
   const d = FINANCIAL_DOCUMENTS.find((x) => x.documentId === docId);
   if (d) {
-    const line = d.lines.find((l) => l.ref === ref);
-    return !!line && (!period || Object.keys(line.values).some((p) => p.toUpperCase() === period.trim()));
+    const line = d.lines.find((l) => l.ref === ref.toUpperCase());
+    if (!line || field) return { ok: false };
+    const periods = Object.keys(line.values);
+    const p = period ? periods.find((x) => x.toUpperCase() === period.trim().toUpperCase()) : periods.length === 1 ? periods[0] : undefined;
+    if (period && !p) return { ok: false };
+    return { ok: true, facilityId: d.facilityId, documentId: docId, value: p ? line.values[p] : undefined };
   }
   const rr = RENT_ROLLS[docId];
-  return !!rr && rr.rows.some((r) => r.ref === ref);
+  if (!rr || period) return { ok: false };
+  const docField = RENT_ROLL_FIELDS.find((f) => f.toLowerCase() === ref.toLowerCase());
+  if (docField && !field) return { ok: true, facilityId: rr.facilityId, documentId: docId, value: rr[docField] };
+  const row = rr.rows.find((r) => r.ref === ref.toUpperCase());
+  if (!row) return { ok: false };
+  if (!field) return { ok: true, facilityId: rr.facilityId, documentId: docId, value: row.annualBaseRent };
+  const rowField = RENT_ROW_FIELDS.find((f) => f.toLowerCase() === field.toLowerCase());
+  return rowField ? { ok: true, facilityId: rr.facilityId, documentId: docId, value: row[rowField] } : { ok: false };
 }
+
+/** Whether a document citation names something that exists. */
+export const citationExists = (raw: unknown): boolean => resolveDocCitation(raw).ok;
 
 export function publicFacility(f: Facility, borrowerLevel: boolean) {
   const base = {

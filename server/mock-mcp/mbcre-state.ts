@@ -16,7 +16,7 @@ export interface ReviewState {
   covenantTests: Array<{ testId: string; at: string; results: Array<{ covenantId: string; value: number; threshold: number; result: "pass" | "breach"; evidenceRefs: string[] }>; breachesRoutedToHuman: string[] }>;
   stressResults: Array<{ resultId: string; at: string; results: unknown[] }>;
   proposedRatings: Array<{ proposalId: string; at: string; grade: string; groupGrade: string; rationale: string; evidenceRefs: string[] }>;
-  memos: Array<{ version: number; at: string; sections: Record<string, string>; figures: Array<{ label: string; value: number; sourceRef: string; traced: boolean }>; tracedPct: number; missingSections: string[] }>;
+  memos: Array<{ version: number; at: string; sections: Record<string, string>; figures: Array<{ label: string; value: number | string | null; sourceRef: string; traced: boolean; reason?: string }>; tracedPct: number; missingSections: string[] }>;
   finalRating: null | { grade: string; groupGrade: string; at: string; setBy: string; actorBankId: string; approvalId: string; rationale: string };
   rmActions: Array<{ actionId: string; at: string; actorId: string; approvalId: string; action: string; note: string }>;
 }

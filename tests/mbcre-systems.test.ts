@@ -183,6 +183,49 @@ describe("the annual review", () => {
   });
 });
 
+describe("memo citations cover what a tenancy memo states", () => {
+  it("traces rent roll fields, document fields, dates, covenant thresholds and grade bands", async () => {
+    await post("/mbcre-loans/document-request/send", { facilityId: TC, ...RM });
+    const RR = "RR-BLU-1007-2026-09";
+    const r = await post("/mbcre-loans/memo", { facilityId: TC, sections: {}, figures: [
+      { label: "Anchor square feet", value: 42_000, sourceRefs: [`${RR}!R01.sqft`] },
+      { label: "Gross leasable area", value: 112_400, sourceRefs: [`${RR}!gla`] },
+      { label: "Anchor lease expiry", value: "2027-06-30", sourceRefs: [`${RR}!R01.leaseExpiry`] },
+      { label: "Anchor tenant", value: "Harbor Fresh Grocery", sourceRefs: [`${RR}!R01.tenant`] },
+      { label: "Maturity", value: "2029-06-30", sourceRefs: [`LS:${TC}.maturityDate`] },
+      { label: "Appraisal date", value: "2025-04-18", sourceRefs: [`LS:${TC}.appraisal.effectiveDate`] },
+      { label: "Occupancy covenant minimum", value: 85, sourceRefs: [`LS:${TC}.covenants.FAC-BLU-1007-COV2.threshold`] },
+      { label: "B+ band maximum LTV", value: 75, sourceRefs: ["POL:BLU.ratingScale.B+.maxLtv"] },
+      { label: "Occupancy", value: 87, sourceRefs: [`${RR}!gla`, `${RR}!R10.sqft`, `${RR}!R11.sqft`], derived: true },
+    ] });
+    expect(r.body.untraced).toEqual([]);
+    expect(r.body.tracedPct).toBe(100);
+  });
+
+  it("says why a figure is untraced", async () => {
+    await post("/mbcre-loans/document-request/send", { facilityId: TC, ...RM });
+    const RR = "RR-BLU-1007-2026-09";
+    const r = await post("/mbcre-loans/memo", { facilityId: TC, sections: {}, figures: [
+      { label: "Anchor square feet cited to the row", value: 42_000, sourceRefs: [`${RR}!R01`] },
+      { label: "Wrong expiry", value: "2027-12-31", sourceRefs: [`${RR}!R01.leaseExpiry`] },
+      { label: "Another bank's policy", value: 1.25, sourceRefs: ["POL:CC5.dscrMinimum"] },
+      { label: "Unknown field", value: 1, sourceRefs: [`${RR}!R01.colour`] },
+    ] });
+    const reasons = Object.fromEntries(r.body.untraced.map((x: any) => [x.label, x.reason]));
+    expect(reasons["Anchor square feet cited to the row"]).toMatch(/is 874000/);
+    expect(reasons["Wrong expiry"]).toMatch(/is 2027-06-30/);
+    expect(reasons["Another bank's policy"]).toMatch(/not a source/);
+    expect(reasons["Unknown field"]).toMatch(/not a source/);
+  });
+
+  it("a spread line still cites an amount, never a date or a name", async () => {
+    await post("/mbcre-loans/document-request/send", { facilityId: TC, ...RM });
+    const bad = await post("/mbcre-loans/spread", { facilityId: TC, period: "T12", lines: [{ line: "Anchor rent", value: 874_000, sourceRef: "RR-BLU-1007-2026-09!R01.leaseExpiry" }], ratios: {} });
+    expect(bad.status).toBe(422);
+    expect((await post("/mbcre-loans/spread", { facilityId: TC, period: "T12", lines: [{ line: "Anchor rent", value: 874_000, sourceRef: "RR-BLU-1007-2026-09!R01.annualBaseRent" }], ratios: {} })).status).toBe(200);
+  });
+});
+
 describe("portfolio and policy", () => {
   it("records warnings only of known types for known facilities", async () => {
     expect((await post("/mbcre-loans/early-warnings", { warnings: [{ facilityId: TC, type: "vibes", detail: "x" }] })).status).toBe(422);
