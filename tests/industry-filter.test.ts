@@ -6,7 +6,9 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
   BUILT_IN_INDUSTRY_IDS,
+  NO_FILTER_INDUSTRY_IDS,
   filterByIndustry,
+  industryIdAliases,
   industryMatches,
   isKnownIndustry,
   pickAgentIndustry,
@@ -55,6 +57,41 @@ describe("industry filtering", () => {
   it("an unknown industry keeps only general-purpose rows", () => {
     expect(industryMatches("insurance", "aerospace")).toBe(false);
     expect(industryMatches("general", "aerospace")).toBe(true);
+  });
+});
+
+describe("industryIdAliases", () => {
+  // The cross-industry workspace is spelled "custom" by the industry picker and
+  // "cross_industry" by everything that writes rows. A reader that honours only
+  // one spelling shows nothing: the ontology page asked for "custom" and could
+  // not reach 91 concepts filed under "cross_industry".
+  it("reads the cross-industry bucket under both of its spellings", () => {
+    expect(industryIdAliases("custom").sort()).toEqual(["cross_industry", "custom"]);
+    expect(industryIdAliases("cross_industry").sort()).toEqual(["cross_industry", "custom"]);
+    expect(industryIdAliases("CUSTOM").sort()).toEqual(["cross_industry", "custom"]);
+  });
+
+  it("leaves every other industry alone, and does not normalise it", () => {
+    // Narrower than NO_FILTER_INDUSTRY_IDS on purpose: these ids mean "don't
+    // filter this catalogue", but a bucket of rows that each belong to one
+    // industry must not start returning every industry's rows.
+    expect(industryIdAliases("insurance")).toEqual(["insurance"]);
+    expect(industryIdAliases("healthcare")).toEqual(["healthcare"]);
+    // Case is preserved: callers match this against stored values, and
+    // lower-casing here would widen what those lookups find.
+    expect(industryIdAliases("INSURANCE")).toEqual(["INSURANCE"]);
+  });
+
+  it("never returns undefined or null for an absent id", () => {
+    expect(industryIdAliases(null)).toEqual([""]);
+    expect(industryIdAliases(undefined)).toEqual([""]);
+  });
+
+  it("returns a fresh array, so a caller cannot mutate the shared constant", () => {
+    const first = industryIdAliases("custom");
+    first.push("insurance");
+    expect(industryIdAliases("custom")).toHaveLength(2);
+    expect(NO_FILTER_INDUSTRY_IDS).toEqual(["custom", "cross_industry"]);
   });
 });
 

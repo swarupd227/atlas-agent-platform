@@ -229,6 +229,7 @@ import {
 } from "@shared/schema";
 import { completeTransition, failTransition, type WorkerTaskState } from "./worker-tasks";
 import { cleanName } from "@shared/display-name";
+import { industryIdAliases } from "@shared/industry-filter";
 
 /** A team's run history in brief (see summarizeDagExecutionRunsByTeamAgent). */
 export interface DagRunSummary {
@@ -3972,7 +3973,7 @@ export class DatabaseStorage implements IStorage {
       // both Workers Comp and Health Insurance), hence the array + ANY check
       // rather than an equality match.
       return db.select().from(ontologyConcepts).where(and(
-        eq(ontologyConcepts.industryId, industryId),
+        inArray(ontologyConcepts.industryId, industryIdAliases(industryId)),
         or(
           isNull(ontologyConcepts.subVerticals),
           sql`cardinality(${ontologyConcepts.subVerticals}) = 0`,
@@ -3981,7 +3982,7 @@ export class DatabaseStorage implements IStorage {
         this.ontologyScope(orgId),
       ));
     }
-    return db.select().from(ontologyConcepts).where(and(eq(ontologyConcepts.industryId, industryId), this.ontologyScope(orgId)));
+    return db.select().from(ontologyConcepts).where(and(inArray(ontologyConcepts.industryId, industryIdAliases(industryId)), this.ontologyScope(orgId)));
   }
   async getOntologyConcept(id: string, orgId?: string | null) {
     const [concept] = await db.select().from(ontologyConcepts).where(and(eq(ontologyConcepts.id, id), this.ontologyScope(orgId)));
@@ -4024,7 +4025,7 @@ export class DatabaseStorage implements IStorage {
       .select({ e: getTableColumns(ontologyEnhancements) })
       .from(ontologyEnhancements)
       .innerJoin(ontologyConcepts, eq(ontologyEnhancements.conceptId, ontologyConcepts.id))
-      .where(and(eq(ontologyConcepts.industryId, industryId), isNull(ontologyConcepts.organizationId)));
+      .where(and(inArray(ontologyConcepts.industryId, industryIdAliases(industryId)), isNull(ontologyConcepts.organizationId)));
     return rows.map((r) => r.e);
   }
   async createOntologyEnhancement(enhancement: InsertOntologyEnhancement) {

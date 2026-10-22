@@ -24,6 +24,33 @@ export const NO_FILTER_INDUSTRY_IDS = ["custom", "cross_industry"];
 
 const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
 
+/**
+ * The industry ids a request for `id` should read rows under.
+ *
+ * The cross-industry workspace is spelled two ways and both are live: the
+ * industry picker's entry has id "custom" (industry-provider.tsx), while rows
+ * are written with "cross_industry" by the agent detail, canary and eval
+ * surfaces, and by anything posting industryId directly. Code that needed both
+ * has so far bridged them one site at a time -- the workspace selector remaps
+ * template counts inline, the agent wizard tests for each spelling separately
+ * -- and a reader that forgets simply shows nothing: the ontology page asked
+ * for "custom", got the 18 concepts filed that way, and could not reach the 91
+ * filed under "cross_industry".
+ *
+ * This is deliberately NARROWER than NO_FILTER_INDUSTRY_IDS. Those ids mean
+ * "don't filter this catalogue at all"; for a bucket of rows that each belong
+ * to one industry, not filtering would return every industry's rows. The
+ * cross-industry bucket is both of its spellings, not everything.
+ *
+ * Every other id is returned exactly as it came in, not normalised: callers
+ * match it against stored values, and lower-casing here would quietly widen
+ * what those lookups find.
+ */
+export function industryIdAliases(id: string | null | undefined): string[] {
+  if (NO_FILTER_INDUSTRY_IDS.includes(norm(id))) return [...NO_FILTER_INDUSTRY_IDS];
+  return [id ?? ""];
+}
+
 export function isKnownIndustry(id: string | null | undefined): boolean {
   const v = norm(id);
   return !!v && ((BUILT_IN_INDUSTRY_IDS as readonly string[]).includes(v) || PACK_INDUSTRY_IDS.map(norm).includes(v));
