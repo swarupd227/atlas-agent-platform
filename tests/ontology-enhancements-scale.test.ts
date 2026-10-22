@@ -147,6 +147,6 @@ describe("the storage call exists and joins through the concepts", () => {
     const body = src.slice(at, src.indexOf("\n  }", at));
     expect(body).toContain("innerJoin(ontologyConcepts");
     expect(body).toContain("ontologyConcepts.industryId");
-    expect(body).not.toContain("inArray");
+    expect(body).toContain("inArray(ontologyConcepts.industryId, industryIdAliases(industryId))");
   });
 });

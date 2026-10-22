@@ -97,7 +97,7 @@ describe("writing ontology concepts", () => {
 describe("enhancements of concepts", () => {
   it("an industry's enhancements are those of its platform-wide concepts, not of any organization's private ones", async () => {
     await storage.getOntologyEnhancementsByIndustry("insurance");
-    expect(sqlOf().sql).toMatch(/"industry_id" = \$\d and .*"organization_id" is null/i);
+    expect(sqlOf().sql).toMatch(/"industry_id" in \(\$\d\) and .*"organization_id" is null/i);
   });
 });
 
