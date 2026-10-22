@@ -51,6 +51,29 @@ describe("buildAgentSystemPrompt: section tagging", () => {
     expect(prompt).toContain(`</role>`);
   });
 
+  it("places the saved agent instructions directly after the role section", () => {
+    const savedInstructions = "Avoid unsupported personal names.\nClearly label every assumption.";
+    const prompt = buildAgentSystemPrompt({
+      ...baseAgent,
+      systemPrompt: `  ${savedInstructions}  `,
+    });
+
+    assertBalancedTags(prompt, ["agent_instructions"]);
+    const roleEnd = prompt.indexOf("</role>");
+    const instructionsStart = prompt.indexOf("<agent_instructions>");
+    const instructionsEnd = prompt.indexOf("</agent_instructions>");
+
+    expect(instructionsStart).toBeGreaterThan(roleEnd);
+    expect(prompt.slice(instructionsStart, instructionsEnd)).toContain(savedInstructions);
+    expect(prompt.match(/<agent_instructions>/g)).toHaveLength(1);
+  });
+
+  it("omits the agent_instructions section for a whitespace-only saved prompt", () => {
+    const prompt = buildAgentSystemPrompt({ ...baseAgent, systemPrompt: "  \n\t " });
+    expect(prompt).not.toContain("<agent_instructions>");
+    expect(prompt).not.toContain("</agent_instructions>");
+  });
+
   it("omits optional-section tags entirely when their data is absent", () => {
     const prompt = buildAgentSystemPrompt(baseAgent);
     for (const tag of ["operational_parameters", "compliance_framework", "policies", "domain_ontology", "tools", "workflow_steps"]) {
@@ -151,8 +174,13 @@ describe("buildAgentSystemPrompt: section tagging", () => {
   });
 
   it("the generic-mode prompt is unaffected (no XML tags, unchanged shape)", () => {
-    const prompt = buildAgentSystemPrompt(baseAgent, { generic: true });
+    const prompt = buildAgentSystemPrompt({
+      ...baseAgent,
+      systemPrompt: "This saved instruction is intentionally excluded in generic mode.",
+    }, { generic: true });
     expect(prompt).not.toContain("<role>");
+    expect(prompt).not.toContain("<agent_instructions>");
+    expect(prompt).not.toContain("This saved instruction is intentionally excluded in generic mode.");
     expect(prompt).toContain("You are a helpful AI assistant.");
     expect(prompt).toContain("```risk_assessment");
   });

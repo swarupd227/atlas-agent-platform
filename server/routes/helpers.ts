@@ -787,9 +787,9 @@ RULES:
   // to the user (or vice versa) -- it has to infer where one section ends
   // and the next begins from adjacency alone. An explicit closing tag
   // removes that inference step. Content/wording is unchanged from before;
-  // only the section boundaries are new (scoped to this function only --
-  // agent.systemPrompt and agent-runtime.ts's own ad-hoc "## " sections are
-  // separate prompt-construction paths, not touched here).
+  // only the section boundaries are new (scoped to this function only).
+  // Saved agent instructions are wrapped explicitly below; agent-runtime.ts's
+  // ad-hoc "## " prompt-construction path remains separate.
   const roleLines: string[] = [];
   roleLines.push(`You are "${agent.name}", an AI agent managed on the ATLAS (Nous Agent Orchestrator Platform).`);
   roleLines.push(`\nUNLIKE a generic AI assistant, you operate within a specific INDUSTRY CONTEXT with regulatory guardrails, policy enforcement, and domain ontology. Every response you give MUST reflect this context. This is what makes you different from ChatGPT or any generic LLM.`);
@@ -797,6 +797,11 @@ RULES:
     roleLines.push(`\nYour purpose: ${agent.description}`);
   }
   parts.push(`<role>\n${roleLines.join("\n")}\n</role>`);
+
+  const agentInstructions = typeof agent.systemPrompt === "string" ? agent.systemPrompt.trim() : "";
+  if (agentInstructions) {
+    parts.push(`\n<agent_instructions>\n${agentInstructions}\n</agent_instructions>`);
+  }
 
   if (agent.riskTier) {
     const autonomyMode = agent.autonomyMode || "assisted";
