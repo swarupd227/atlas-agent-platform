@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useState, useMemo } from "react";
 import { QueryBoundary } from "@/components/ui-vocab";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -381,16 +382,14 @@ export default function GoldenDatasetsPage() {
                 <div className="flex flex-col gap-5" data-testid="wizard-step-1">
                   <div className="flex flex-col gap-2">
                     <Label>Industry</Label>
-                    <Select value={wIndustry} onValueChange={(v) => { setWIndustry(v); setSuggestedUseCases([]); }}>
+                    <IndustrySelect value={wIndustry} onValueChange={(v) => { setWIndustry(v); setSuggestedUseCases([]); }}>
                       <SelectTrigger data-testid="select-wizard-industry">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
-                        {industryOptions.filter(o => o.value !== "all").map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+<SelectContent>
+                  <IndustrySelectItems />
+                </SelectContent>
+                    </IndustrySelect>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -713,14 +712,12 @@ export default function GoldenDatasetsPage() {
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label>Industry</Label>
-                  <Select value={newIndustry} onValueChange={setNewIndustry}>
+                  <IndustrySelect value={newIndustry} onValueChange={setNewIndustry}>
                     <SelectTrigger data-testid="select-create-industry"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {industryOptions.filter(o => o.value !== "all").map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+<SelectContent>
+                  <IndustrySelectItems />
+                </SelectContent>
+                  </IndustrySelect>
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label>Use Case</Label>
@@ -769,17 +766,15 @@ export default function GoldenDatasetsPage() {
                   data-testid="input-search-datasets"
                 />
               </div>
-              <Select value={industryFilter} onValueChange={setIndustryFilter}>
+              <IndustrySelect includeAll value={industryFilter} onValueChange={setIndustryFilter}>
                 <SelectTrigger className="w-[180px]" data-testid="select-industry-filter">
                   <Filter className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
                   <SelectValue placeholder="Industry" />
                 </SelectTrigger>
-                <SelectContent>
-                  {industryOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
+<SelectContent>
+                  <IndustrySelectItems includeAll />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
             </div>
 
             {filtered.length === 0 ? (

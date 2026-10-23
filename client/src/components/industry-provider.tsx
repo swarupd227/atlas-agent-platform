@@ -15,6 +15,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { INDUSTRY_PACKS, packIndustryTerms } from "@shared/industry-packs";
+import { useAuth } from "./auth-provider";
+import { visibleDemoIndustries, demoIndustrySelection, type DemoIndustryVisibility } from "@shared/demo-industry-visibility";
 
 /** Industry ids are open: the built-ins listed below, plus any supplied by an
  *  industry pack in shared/industry-packs. Kept as a string so adding a
@@ -766,6 +768,9 @@ const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
 };
 
 interface IndustryContextType {
+  demoCanManage: boolean;
+  demoVisibilityState: "loading" | "error" | "unconfigured" | "ready";
+  refreshDemoVisibility: () => void;
   industry: IndustryProfile | null;
   setIndustry: (id: IndustryId) => void;
   clearIndustry: () => void;
@@ -913,6 +918,19 @@ const DEPARTMENT_FRAMEWORKS: Record<string, Record<string, string[]>> = {
 const IndustryContext = createContext<IndustryContextType | null>(null);
 
 export function IndustryProvider({ children }: { children: ReactNode }) {
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const demoQuery = useQuery<DemoIndustryVisibility>({
+    queryKey: ["/api/demo/industry-visibility", user?.id ?? user?.username ?? "signed-out"],
+    queryFn: async () => {
+      const response = await fetch("/api/demo/industry-visibility", { credentials: "include", headers: getApiHeaders() });
+      if (!response.ok) throw new Error("Could not load demo industry settings.");
+      return response.json();
+    },
+    enabled: isAuthenticated && !authLoading, staleTime: 0, refetchOnWindowFocus: true, retry: false,
+  });
+  const visibleIndustries = useMemo(() => visibleDemoIndustries(INDUSTRIES, demoQuery.data), [demoQuery.data]);
+  const demoVisibilityState = demoQuery.isError ? "error" : !demoQuery.data ? "loading"
+    : demoQuery.data.enabled && !demoQuery.data.canManage && !demoQuery.data.configured ? "unconfigured" : "ready";
   const [industryId, setIndustryId] = useState<IndustryId | null>(() => {
     if (typeof window !== "undefined") {
       return (localStorage.getItem("almp-industry") as IndustryId) || null;
@@ -938,8 +956,8 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
   });
 
   const industry = useMemo(
-    () => (industryId ? INDUSTRIES.find((i) => i.id === industryId) || null : null),
-    [industryId],
+    () => (industryId ? visibleIndustries.find((i) => i.id === industryId) || null : null),
+    [industryId, visibleIndustries],
   );
 
   // The organization's industry. Signed-out or older servers just answer
@@ -957,7 +975,21 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
   // True between clearing the industry and picking a new one in the setup wizard.
   const choosingRef = useRef(false);
 
+  useLayoutEffect(() => {
+    if (!demoQuery.data || choosingRef.current) return;
+    const next = demoIndustrySelection(industryId, demoQuery.data, INDUSTRIES);
+    if (next === industryId) return;
+    setIndustryId(next);
+    if (next) localStorage.setItem("almp-industry", next); else localStorage.removeItem("almp-industry");
+    localStorage.removeItem(PERSONAL_KEY);
+    localStorage.removeItem("almp-sub-vertical");
+    localStorage.removeItem("almp-workspace-config");
+    setSubVerticalState(null);
+    setWorkspaceConfigState(DEFAULT_WORKSPACE_CONFIG);
+  }, [demoQuery.data, industryId]);
+
   const adoptOrganization = useCallback((adopt: string) => {
+    if (!visibleIndustries.some(i => i.id === adopt)) return;
     choosingRef.current = false;
     setIndustryId(adopt as IndustryId);
     localStorage.setItem("almp-industry", adopt);
@@ -970,10 +1002,12 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
       setWorkspaceConfigState(org.workspaceConfig);
       localStorage.setItem("almp-workspace-config", JSON.stringify(org.workspaceConfig));
     }
-  }, [org]);
+  }, [org, visibleIndustries]);
 
   // Before paint, so a browser that adopts never flashes the setup wizard.
   useLayoutEffect(() => {
+    // An assigned demo default takes precedence over the organization's default.
+    if (demoQuery.data?.enabled && !demoQuery.data.canManage) return;
     const adopt = industryToAdopt({
       tenantIndustryId,
       localIndustryId: industryId,
@@ -982,8 +1016,7 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
     });
     if (adopt) adoptOrganization(adopt);
     // Only when the organization's value arrives or changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantIndustryId]);
+  }, [tenantIndustryId, demoQuery.data]);
 
   const returnToOrganizationIndustry = useCallback(() => {
     if (tenantIndustryId) adoptOrganization(tenantIndustryId);
@@ -999,6 +1032,7 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setIndustry = useCallback((id: IndustryId) => {
+    if (!visibleIndustries.some(i => i.id === id)) return;
     choosingRef.current = false;
     setIndustryId(id);
     localStorage.setItem("almp-industry", id);
@@ -1011,7 +1045,7 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
     // it over to a different industry where it has no meaning.
     setSubVerticalState(null);
     localStorage.removeItem("almp-sub-vertical");
-  }, [tenantIndustryId]);
+  }, [tenantIndustryId, visibleIndustries]);
 
   const clearIndustry = useCallback(() => {
     choosingRef.current = true;
@@ -1077,14 +1111,17 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
   return (
     <IndustryContext.Provider
       value={{
+        demoCanManage: !!demoQuery.data?.canManage,
+        demoVisibilityState,
+        refreshDemoVisibility: () => { void demoQuery.refetch(); },
         industry,
         setIndustry,
         clearIndustry,
         subVertical,
         setSubVertical,
-        isSelected: industryId !== null,
+        isSelected: industry !== null,
         term,
-        allIndustries: INDUSTRIES,
+        allIndustries: visibleIndustries,
         workspaceConfig,
         setWorkspaceConfig,
         activeFrameworks,

@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useMemo, useCallback, type ReactNode } from "react";
+import { useAuth } from "./auth-provider";
 import {
   Target,
   Bot,
@@ -229,16 +230,20 @@ interface RoleContextType {
 const RoleContext = createContext<RoleContextType | null>(null);
 
 export function RoleProvider({ children }: { children: ReactNode }) {
-  const [roleId, setRoleId] = useState<RoleId>(() => {
+  const { securityMode, user } = useAuth();
+  const [localRoleId, setRoleId] = useState<RoleId>(() => {
     if (typeof window !== "undefined") {
       return (localStorage.getItem("almp-role") as RoleId) || "admin";
     }
     return "admin";
   });
+  const roleId: RoleId = securityMode === "production"
+    ? (ROLES.find(r => r.id === user?.role)?.id ?? "agent_engineer") : localRoleId;
 
   const role = useMemo(() => ROLES.find((r) => r.id === roleId) || ROLES[0], [roleId]);
 
   const setRole = (newRoleId: RoleId) => {
+    if (securityMode === "production") return;
     setRoleId(newRoleId);
     localStorage.setItem("almp-role", newRoleId);
   };

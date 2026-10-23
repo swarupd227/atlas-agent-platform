@@ -251,6 +251,7 @@ export type WorkspaceAgentRow = Pick<
 >;
 
 export interface IStorage {
+  getLoginUsers(orgId: string): Promise<Array<Pick<User, "id" | "username" | "email" | "role" | "active" | "organizationId">>>;
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -1231,6 +1232,10 @@ function resolveOrgIdForRead(orgId?: string | null): string | undefined {
 }
 
 export class DatabaseStorage implements IStorage {
+  async getLoginUsers(orgId: string) {
+    return db.select({ id: users.id, username: users.username, email: users.email, role: users.role, active: users.active, organizationId: users.organizationId })
+      .from(users).where(eq(users.organizationId, orgId)).orderBy(users.username);
+  }
   async getUser(id: string) {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;

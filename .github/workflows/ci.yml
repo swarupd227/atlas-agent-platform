@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, demo/hilti-industry-visibility]
   pull_request:
     branches: [main]
 
@@ -32,6 +32,9 @@ jobs:
       # Blocking gate: the production build must succeed.
       - name: Build (client + server)
         run: npm run build
+
+      - name: Demo users and industry visibility
+        run: npx vitest run -c vitest.integration.config.ts tests/demo-industry-visibility.test.ts tests/demo-users.test.ts
 
       - name: AWS deployment contract tests
         run: |

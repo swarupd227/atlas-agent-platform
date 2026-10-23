@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { formatDate } from "@/lib/format";
 import { useQuery } from "@tanstack/react-query";
@@ -1077,25 +1078,14 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   </div>
                   <div className="space-y-1.5">
                     <Label>Industry</Label>
-                    <Select value={industry} onValueChange={(val) => { setIndustry(val); validateOntologyTags(tags, val); }}>
+                    <IndustrySelect value={industry} onValueChange={(val) => { setIndustry(val); validateOntologyTags(tags, val); }}>
                       <SelectTrigger data-testid="select-industry">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="financial_services">Financial Services</SelectItem>
-                        <SelectItem value="healthcare">Healthcare</SelectItem>
-                        <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                        <SelectItem value="insurance">Insurance</SelectItem>
-                        <SelectItem value="retail">Retail</SelectItem>
-                        <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                        <SelectItem value="legal_services">Legal Services</SelectItem>
-                        {packIndustryOptions.map((o) => (
-                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                        ))}
-                        <SelectItem value="cross_industry">Cross-Industry</SelectItem>
-                        <SelectItem value="custom">Custom</SelectItem>
-                      </SelectContent>
-                    </Select>
+<SelectContent>
+                  <IndustrySelectItems />
+                </SelectContent>
+                    </IndustrySelect>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="skill-domain">Domain</Label>
@@ -1606,25 +1596,14 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label>Industry</Label>
-                  <Select value={builderIndustry} onValueChange={setBuilderIndustry}>
+                  <IndustrySelect value={builderIndustry} onValueChange={setBuilderIndustry}>
                     <SelectTrigger data-testid="select-builder-industry">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="financial_services">Financial Services</SelectItem>
-                      <SelectItem value="healthcare">Healthcare</SelectItem>
-                      <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                      <SelectItem value="insurance">Insurance</SelectItem>
-                      <SelectItem value="retail">Retail</SelectItem>
-                      <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                      <SelectItem value="legal_services">Legal Services</SelectItem>
-                      {packIndustryOptions.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                      ))}
-                      <SelectItem value="cross_industry">Cross-Industry</SelectItem>
-                      <SelectItem value="custom">Custom</SelectItem>
-                    </SelectContent>
-                  </Select>
+<SelectContent>
+                  <IndustrySelectItems />
+                </SelectContent>
+                  </IndustrySelect>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="builder-domain">Domain</Label>

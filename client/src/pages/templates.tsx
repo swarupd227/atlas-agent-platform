@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { useLocation, Link } from "wouter";
@@ -389,19 +390,14 @@ export default function Templates() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={industryFilter} onValueChange={setIndustryFilter}>
+        <IndustrySelect includeAll value={industryFilter} onValueChange={setIndustryFilter}>
           <SelectTrigger className="w-48" data-testid="select-industry-filter">
             <SelectValue placeholder="All Industries" />
           </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Industries</SelectItem>
-            {industries.map((i) => (
-              <SelectItem key={i} value={i}>
-                {industryLabels[i] || i}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+<SelectContent>
+                  <IndustrySelectItems includeAll />
+                </SelectContent>
+        </IndustrySelect>
         {industry && industry.id !== "custom" && industryFilter !== industry.id && (
           <Button
             variant="outline"

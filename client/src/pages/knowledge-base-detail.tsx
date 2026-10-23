@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useState, useRef, useEffect } from "react";
 import { formatDate } from "@/lib/format";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1696,24 +1697,14 @@ export default function KnowledgeBaseDetail() {
             </div>
             <div>
               <Label>Industry</Label>
-              <Select value={editInfoForm.industry} onValueChange={(v) => setEditInfoForm({ ...editInfoForm, industry: v })}>
+              <IndustrySelect general value={editInfoForm.industry} onValueChange={(v) => setEditInfoForm({ ...editInfoForm, industry: v })}>
                 <SelectTrigger data-testid="select-edit-kb-industry">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="general">General</SelectItem>
-                  <SelectItem value="financial_services">Financial Services</SelectItem>
-                  <SelectItem value="healthcare">Healthcare</SelectItem>
-                  <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                  <SelectItem value="insurance">Insurance</SelectItem>
-                  <SelectItem value="retail">Retail</SelectItem>
-                  <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                  <SelectItem value="legal_services">Legal Services</SelectItem>
-                  {packIndustryOptions.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
+<SelectContent>
+                  <IndustrySelectItems general />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
             </div>
           </div>
           <DialogFooter>

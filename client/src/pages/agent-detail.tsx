@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import JSZip from "jszip";
 import { formatDate } from "@/lib/format";
@@ -5660,16 +5661,14 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
                         <div className="flex flex-col gap-4">
                           <div className="flex flex-col gap-1.5">
                             <Label>Industry</Label>
-                            <Select value={promoteIndustryId} onValueChange={(val) => { setPromoteIndustryId(val); setPromoteSubVertical(""); }}>
+                            <IndustrySelect excludeCrossIndustry value={promoteIndustryId} onValueChange={(val) => { setPromoteIndustryId(val); setPromoteSubVertical(""); }}>
                               <SelectTrigger data-testid="select-promote-journey-industry">
                                 <SelectValue placeholder="Select an industry" />
                               </SelectTrigger>
-                              <SelectContent>
-                                {INDUSTRIES.filter(i => i.id !== "custom").map(i => (
-                                  <SelectItem key={i.id} value={i.id}>{i.label}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+<SelectContent>
+                  <IndustrySelectItems excludeCrossIndustry />
+                </SelectContent>
+                            </IndustrySelect>
                           </div>
                           <div className="flex flex-col gap-1.5">
                             <Label>Sub-vertical</Label>
@@ -10094,25 +10093,14 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
             </div>
             <div className="flex flex-col gap-2">
               <Label>Industry</Label>
-              <Select value={newKbIndustry} onValueChange={setNewKbIndustry}>
+              <IndustrySelect general value={newKbIndustry} onValueChange={setNewKbIndustry}>
                 <SelectTrigger data-testid="select-new-kb-industry">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="general">General</SelectItem>
-                  <SelectItem value="healthcare">Healthcare</SelectItem>
-                  <SelectItem value="financial_services">Financial Services</SelectItem>
-                  <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                  <SelectItem value="insurance">Insurance</SelectItem>
-                  <SelectItem value="retail">Retail</SelectItem>
-                  <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                  <SelectItem value="legal_services">Legal Services</SelectItem>
-                  {packIndustryOptions.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                  <SelectItem value="cross_industry">Cross-Industry</SelectItem>
+<SelectContent>
+                  <IndustrySelectItems general />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
             </div>
           </div>
           <DialogFooter>

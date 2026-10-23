@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "wouter";
@@ -669,26 +670,15 @@ export default function PolicyEngine() {
                 <SelectItem value="Global">Global</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={industryFilter} onValueChange={setIndustryFilter}>
+            <IndustrySelect includeAll value={industryFilter} onValueChange={setIndustryFilter}>
               <SelectTrigger className="w-[160px]" data-testid="select-industry">
                 <Building2 className="w-3.5 h-3.5 mr-1.5 text-muted-foreground shrink-0" />
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Industries</SelectItem>
-                <SelectItem value="cross_industry">Cross-Industry</SelectItem>
-                <SelectItem value="healthcare">Healthcare</SelectItem>
-                <SelectItem value="financial_services">Financial Services</SelectItem>
-                <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                <SelectItem value="insurance">Insurance</SelectItem>
-                <SelectItem value="retail">Retail</SelectItem>
-                <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                <SelectItem value="legal_services">Legal Services</SelectItem>
-                {packIndustryOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+<SelectContent>
+                  <IndustrySelectItems includeAll />
+                </SelectContent>
+            </IndustrySelect>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

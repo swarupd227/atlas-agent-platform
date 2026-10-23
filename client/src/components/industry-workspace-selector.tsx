@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useAuth } from "./auth-provider";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentTemplate } from "@shared/schema";
 import { useIndustry, INDUSTRIES, type IndustryId, type DataClassification, type WorkspaceConfig } from "./industry-provider";
@@ -22,6 +23,7 @@ import {
 type WizardStep = "select" | "configure" | "review";
 
 export function IndustryWorkspaceSelector() {
+  const { logout } = useAuth();
   // Radix locks <body> with pointer-events:none while a modal is open and
   // restores it when the close ANIMATION finishes. Switching industry from an
   // already-configured workspace unmounts the confirm AlertDialog and mounts
@@ -52,7 +54,7 @@ export function IndustryWorkspaceSelector() {
     return () => obs.disconnect();
   }, []);
 
-  const { isSelected, setIndustry, setWorkspaceConfig, canSetIndustryForOrg, tenantIndustryId, organizationName, organizationLoading, setIndustryForOrganization } = useIndustry();
+  const { isSelected, setIndustry, setWorkspaceConfig, canSetIndustryForOrg, tenantIndustryId, organizationName, organizationLoading, setIndustryForOrganization, allIndustries, demoVisibilityState, refreshDemoVisibility } = useIndustry();
   const [selectedId, setSelectedId] = useState<IndustryId | null>(null);
   const [step, setStep] = useState<WizardStep>("select");
 
@@ -75,7 +77,7 @@ export function IndustryWorkspaceSelector() {
     }
   }, []);
 
-  const selected = selectedId ? INDUSTRIES.find((i) => i.id === selectedId) : null;
+  const selected = selectedId ? allIndustries.find((i) => i.id === selectedId) : null;
 
   // Golden-template counts per industry, computed live from the real
   // catalog rather than a static number -- a hardcoded count here drifted
@@ -109,6 +111,16 @@ export function IndustryWorkspaceSelector() {
 
   // Wait for the organization's industry: once it has one, the wizard isn't needed.
   if (isSelected || organizationLoading) return null;
+  if (demoVisibilityState !== "ready") return (
+    <div className="fixed inset-0 z-[100] bg-background flex items-center justify-center p-6" data-testid="demo-industry-status">
+      <div className="space-y-4 text-center">
+        <h1 className="text-xl font-semibold">{demoVisibilityState === "loading" ? "Loading your workspace…" : demoVisibilityState === "error" ? "Could not load your demo settings" : "Demo access has not been configured"}</h1>
+        <p className="text-muted-foreground">{demoVisibilityState === "unconfigured" ? "Ask your administrator to assign industries to your account." : "Your industry options will appear once settings are available."}</p>
+        <Button variant="outline" onClick={refreshDemoVisibility} data-testid="button-refresh-demo-visibility">Retry</Button>
+        <Button variant="ghost" onClick={() => void logout()} data-testid="button-demo-sign-out">Sign out</Button>
+      </div>
+    </div>
+  );
 
   const handleContinueToConfig = () => {
     if (selectedId === "custom") {
@@ -197,7 +209,7 @@ export function IndustryWorkspaceSelector() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {INDUSTRIES.map((industry) => {
+                {allIndustries.map((industry) => {
                   const isActive = selectedId === industry.id;
                   const Icon = industry.icon;
                   return (

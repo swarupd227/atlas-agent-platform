@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -211,7 +212,7 @@ type TriggerCondition = {
 
 export default function RunbookAutomation() {
   const { toast } = useToast();
-  const { industry } = useIndustry();
+  const { industry, allIndustries } = useIndustry();
   const industryId = industry?.id || "cross_industry";
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -621,7 +622,7 @@ export default function RunbookAutomation() {
 
           <div className="flex flex-wrap items-center gap-1">
             <Filter className="w-3.5 h-3.5 text-muted-foreground mr-1" />
-            {INDUSTRY_FILTERS.map((f) => (
+            {[{ key: "all", label: "All" }, ...allIndustries.map(i => ({ key: i.id === "custom" ? "cross_industry" : i.id, label: i.shortLabel }))].map((f) => (
               <Button
                 key={f.key}
                 variant={industryFilter === f.key ? "default" : "outline"}
@@ -1130,24 +1131,14 @@ export default function RunbookAutomation() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Industry</Label>
-                <Select value={newRunbook.industry} onValueChange={(v: any) => setNewRunbook({ ...newRunbook, industry: v })}>
+                <IndustrySelect value={newRunbook.industry} onValueChange={(v: any) => setNewRunbook({ ...newRunbook, industry: v })}>
                   <SelectTrigger data-testid="select-runbook-industry">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="financial_services">Financial Services</SelectItem>
-                    <SelectItem value="healthcare">Healthcare</SelectItem>
-                    <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                    <SelectItem value="insurance">Insurance</SelectItem>
-                    <SelectItem value="retail">Retail</SelectItem>
-                    <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                    <SelectItem value="legal_services">Legal Services</SelectItem>
-                    {packIndustryOptions.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                    ))}
-                    <SelectItem value="cross_industry">Cross-Industry</SelectItem>
-                  </SelectContent>
-                </Select>
+<SelectContent>
+                  <IndustrySelectItems />
+                </SelectContent>
+                </IndustrySelect>
               </div>
               <div>
                 <Label>Category</Label>
@@ -1264,24 +1255,14 @@ export default function RunbookAutomation() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Industry</Label>
-                <Select value={editRunbook.industry} onValueChange={(v: any) => setEditRunbook({ ...editRunbook, industry: v })}>
+                <IndustrySelect value={editRunbook.industry} onValueChange={(v: any) => setEditRunbook({ ...editRunbook, industry: v })}>
                   <SelectTrigger data-testid="select-edit-runbook-industry">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="financial_services">Financial Services</SelectItem>
-                    <SelectItem value="healthcare">Healthcare</SelectItem>
-                    <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                    <SelectItem value="insurance">Insurance</SelectItem>
-                    <SelectItem value="retail">Retail</SelectItem>
-                    <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                    <SelectItem value="legal_services">Legal Services</SelectItem>
-                    {packIndustryOptions.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                    ))}
-                    <SelectItem value="cross_industry">Cross-Industry</SelectItem>
-                  </SelectContent>
-                </Select>
+<SelectContent>
+                  <IndustrySelectItems />
+                </SelectContent>
+                </IndustrySelect>
               </div>
               <div>
                 <Label>Category</Label>

@@ -17,6 +17,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: read
 
 concurrency:
   group: aws-image-${{ inputs.deployment_id }}
@@ -39,6 +40,12 @@ jobs:
             echo "Invalid deployment_id: $DEPLOYMENT_ID" >&2
             exit 1
           }
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            [[ "$GITHUB_REF" == refs/heads/demo/hilti-industry-visibility && "$DEPLOYMENT_ID" == demo ]] || {
+              echo "Custom branch builds are permitted only for the approved Dev demo target." >&2
+              exit 1
+            }
+          fi
 
       - name: Checkout approved source
         uses: actions/checkout@v4
@@ -46,21 +53,33 @@ jobs:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
 
-      - name: Verify source belongs to main
+      - name: Verify approved source and completed CI
         id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git fetch origin main --no-tags
           source_sha=$(git rev-parse HEAD)
-          git merge-base --is-ancestor "$source_sha" origin/main || {
-            echo "Source commit is not part of origin/main: $source_sha" >&2
-            exit 1
-          }
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            git merge-base --is-ancestor "$source_sha" origin/main || {
+              echo "Source commit is not part of origin/main: $source_sha" >&2
+              exit 1
+            }
+          else
+            git fetch origin demo/hilti-industry-visibility --no-tags
+            [[ "$source_sha" == "$(git rev-parse FETCH_HEAD)" ]] || {
+              echo "Dev builds must use the current approved demo branch commit." >&2
+              exit 1
+            }
+            ci=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch demo/hilti-industry-visibility --commit "$source_sha" --event push --limit 1 --json status,conclusion --jq '.[0] | .status + ":" + .conclusion')
+            [[ "$ci" == completed:success ]] || { echo "The exact Dev commit must pass CI first." >&2; exit 1; }
+          fi
           echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::964604400233:role/astra-agents-github-ecr-push
+          role-to-assume: ${{ github.ref == 'refs/heads/main' && 'arn:aws:iam::964604400233:role/astra-agents-github-ecr-push' || 'arn:aws:iam::964604400233:role/astra-agents-github-dev-demo-push' }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR

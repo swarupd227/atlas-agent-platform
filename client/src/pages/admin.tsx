@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { DemoUsersTab } from "@/components/demo-users-tab";
+import { useIndustry } from "@/components/industry-provider";
 import type { OrgSettings, AdminUser, EnvironmentConfig, SecretRotationPolicy, AdminWebhook, PlatformSetting } from "@shared/schema";
 
 const ROLES = [
@@ -1158,6 +1160,7 @@ function WebhooksTab() {
 }
 
 export default function Admin() {
+  const { demoCanManage } = useIndustry();
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-admin">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -1190,6 +1193,7 @@ export default function Admin() {
             <Users className="w-3.5 h-3.5 mr-1.5" />
             Users & Roles
           </TabsTrigger>
+          {demoCanManage && <TabsTrigger value="demo-users" data-testid="tab-demo-users">Demo Users</TabsTrigger>}
           <TabsTrigger value="environments" data-testid="tab-environments">
             <Server className="w-3.5 h-3.5 mr-1.5" />
             Environments
@@ -1215,6 +1219,7 @@ export default function Admin() {
         <TabsContent value="users" className="mt-4">
           <UsersRolesTab />
         </TabsContent>
+        {demoCanManage && <TabsContent value="demo-users" className="mt-4"><DemoUsersTab /></TabsContent>}
 
         <TabsContent value="environments" className="mt-4">
           <EnvironmentsTab />

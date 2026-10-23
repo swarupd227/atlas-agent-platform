@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import { setSecurityMode as syncSecurityMode } from "@/lib/queryClient";
+import { queryClient, setSecurityMode as syncSecurityMode } from "@/lib/queryClient";
 import { toast } from "@/hooks/use-toast";
 
 interface AuthUser {
@@ -57,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const meRes = await fetch("/api/auth/me", { credentials: "include" });
         if (meRes.ok) {
           const meData = await meRes.json();
-          setUser(meData.user);
+          setUser({ ...meData.user, id: meData.user.id ?? meData.user.userId });
           setIsAuthenticated(true);
         } else if (meRes.status !== 401) {
           // A genuine 401 just means "not logged in" -- expected, stay
@@ -101,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: data.message || "Login failed" };
       }
       const data = await res.json();
+      queryClient.clear();
       setUser(data.user);
       setIsAuthenticated(true);
       return { success: true };
@@ -111,6 +112,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    queryClient.clear();
+    for (const key of ["almp-industry", "almp-industry-personal", "almp-sub-vertical", "almp-workspace-config"]) localStorage.removeItem(key);
+    for (const key of ["templates_industry_filter", "templates_category_filter"]) sessionStorage.removeItem(key);
     setUser(null);
     setIsAuthenticated(false);
   }, []);

@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -224,16 +225,14 @@ export default function KnowledgeBases() {
               </div>
               <div>
                 <Label>Industry</Label>
-                <Select value={newKb.industry} onValueChange={(v) => setNewKb({ ...newKb, industry: v })}>
+                <IndustrySelect general value={newKb.industry} onValueChange={(v) => setNewKb({ ...newKb, industry: v })}>
                   <SelectTrigger data-testid="select-kb-industry">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(INDUSTRY_CONFIG).map(([key, { label }]) => (
-                      <SelectItem key={key} value={key}>{label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <IndustrySelectItems general />
+                </SelectContent>
+                </IndustrySelect>
               </div>
               <div>
                 <Label>Vector Database</Label>
@@ -268,17 +267,14 @@ export default function KnowledgeBases() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input data-testid="input-search-kb" className="pl-9" placeholder="Search knowledge bases..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <Select value={industryFilter} onValueChange={setIndustryFilter}>
+        <IndustrySelect includeAll general value={industryFilter} onValueChange={setIndustryFilter}>
           <SelectTrigger className="w-48" data-testid="select-filter-industry">
             <SelectValue placeholder="All Industries" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Industries</SelectItem>
-            {Object.entries(INDUSTRY_CONFIG).map(([key, { label }]) => (
-              <SelectItem key={key} value={key}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+                  <IndustrySelectItems includeAll general />
+                </SelectContent>
+        </IndustrySelect>
       </div>
 
       {filtered.length === 0 ? (
@@ -391,16 +387,14 @@ export default function KnowledgeBases() {
             </div>
             <div>
               <Label>Industry</Label>
-              <Select value={editKb.industry} onValueChange={(v) => setEditKb({ ...editKb, industry: v })}>
+              <IndustrySelect general value={editKb.industry} onValueChange={(v) => setEditKb({ ...editKb, industry: v })}>
                 <SelectTrigger data-testid="select-edit-kb-industry">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(INDUSTRY_CONFIG).map(([key, { label }]) => (
-                    <SelectItem key={key} value={key}>{label}</SelectItem>
-                  ))}
+                  <IndustrySelectItems general />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
             </div>
           </div>
           <DialogFooter>

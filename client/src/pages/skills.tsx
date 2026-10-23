@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { QueryBoundary } from "@/components/ui-vocab";
 import { useIndustry } from "@/components/industry-provider";
@@ -541,17 +542,14 @@ export default function SkillCatalog() {
                   data-testid="input-skill-search"
                 />
               </div>
-              <Select value={industryFilter} onValueChange={setIndustryFilter}>
+              <IndustrySelect includeAll value={industryFilter} onValueChange={setIndustryFilter}>
                 <SelectTrigger className="w-[170px]" data-testid="select-industry-filter">
                   <SelectValue placeholder="Industry" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Industries</SelectItem>
-                  {Object.entries(INDUSTRY_CONFIG).map(([key, cfg]) => (
-                    <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
-                  ))}
+                  <IndustrySelectItems includeAll />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
               <Select value={domainFilter} onValueChange={setDomainFilter}>
                 <SelectTrigger className="w-[180px]" data-testid="select-domain-filter">
                   <SelectValue placeholder="Domain" />
@@ -663,16 +661,14 @@ export default function SkillCatalog() {
                 <div className="flex items-end gap-3 flex-wrap">
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-muted-foreground">Industry</label>
-                    <Select value={generateIndustry} onValueChange={setGenerateIndustry}>
+                    <IndustrySelect value={generateIndustry} onValueChange={setGenerateIndustry}>
                       <SelectTrigger className="w-[200px]" data-testid="select-generate-industry">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Object.entries(INDUSTRY_CONFIG).map(([key, cfg]) => (
-                          <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <IndustrySelectItems />
+                </SelectContent>
+                    </IndustrySelect>
                   </div>
                   <div className="space-y-1.5 flex-1 min-w-[200px]">
                     <label className="text-xs font-medium text-muted-foreground">Domain</label>

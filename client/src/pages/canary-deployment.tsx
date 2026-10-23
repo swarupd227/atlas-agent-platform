@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -1251,24 +1252,14 @@ export default function CanaryDeploymentPage() {
             </div>
             <div className="space-y-2">
               <Label>Industry</Label>
-              <Select value={newDeployment.industry || "financial_services"} onValueChange={(v) => setNewDeployment({ ...newDeployment, industry: v as any })}>
+              <IndustrySelect value={newDeployment.industry || "financial_services"} onValueChange={(v) => setNewDeployment({ ...newDeployment, industry: v as any })}>
                 <SelectTrigger data-testid="select-canary-industry">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="healthcare">Healthcare</SelectItem>
-                  <SelectItem value="financial_services">Financial Services</SelectItem>
-                  <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                  <SelectItem value="insurance">Insurance</SelectItem>
-                  <SelectItem value="retail">Retail</SelectItem>
-                  <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                  <SelectItem value="legal_services">Legal Services</SelectItem>
-                  {packIndustryOptions.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                  <SelectItem value="cross_industry">Cross-Industry</SelectItem>
+<SelectContent>
+                  <IndustrySelectItems />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
             </div>
             <div className="flex items-center justify-between gap-2">
               <Label>Auto-promote when gates pass</Label>

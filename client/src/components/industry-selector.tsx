@@ -28,6 +28,7 @@ export function IndustrySelector() {
     industry, clearIndustry, subVertical, setSubVertical, isSelected, workspaceConfig,
     tenantIndustryId, industrySource, canSetIndustryForOrg, organizationName,
     setIndustryForOrganization, returnToOrganizationIndustry,
+    allIndustries,
   } = useIndustry();
   const { toast } = useToast();
   const [confirmSetForOrg, setConfirmSetForOrg] = useState(false);
@@ -44,7 +45,7 @@ export function IndustrySelector() {
 
   const hasSubVerticals = !!industry && industry.subVerticals.length > 0;
   const orgName = organizationName ?? "your organization";
-  const tenantIndustry = tenantIndustryId ? INDUSTRIES.find((i) => i.id === tenantIndustryId) : null;
+  const tenantIndustry = tenantIndustryId ? allIndustries.find((i) => i.id === tenantIndustryId) : null;
   // A personal view: the organization has an industry and this person is looking at another.
   const viewingAs = industrySource === "local" && !!tenantIndustryId;
   const canMakeOrgIndustry = canSetIndustryForOrg && !!industry && industry.id !== tenantIndustryId;
@@ -114,7 +115,7 @@ export function IndustrySelector() {
             </>
           )}
           <DropdownMenuSeparator />
-          {INDUSTRIES.map((ind) => {
+          {allIndustries.map((ind) => {
             const Icon = ind.icon;
             const isActive = industry?.id === ind.id;
             return (

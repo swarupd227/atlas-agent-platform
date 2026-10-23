@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useRef } from "react";
 import { useRoute, useLocation, Link } from "wouter";
@@ -1159,16 +1160,14 @@ export default function TemplateDetail() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Industry</label>
-              <Select value={editData.industry || "cross_industry"} onValueChange={(v) => setEditData({ ...editData, industry: v })}>
+              <IndustrySelect value={editData.industry || "cross_industry"} onValueChange={(v) => setEditData({ ...editData, industry: v })}>
                 <SelectTrigger className="w-44" data-testid="select-edit-industry">
                   <SelectValue placeholder="Industry" />
                 </SelectTrigger>
-                <SelectContent>
-                  {allIndustries.map(i => (
-                    <SelectItem key={i} value={i}>{industryLabels[i]}</SelectItem>
-                  ))}
+<SelectContent>
+                  <IndustrySelectItems />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Complexity</label>

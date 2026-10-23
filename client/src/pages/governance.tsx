@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { formatDate } from "@/lib/format";
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -7394,16 +7395,14 @@ function CreatePolicyPackDialog({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Industry</label>
-              <Select value={packIndustry} onValueChange={(v) => setPackIndustry(v)}>
+              <IndustrySelect includeAll value={packIndustry} onValueChange={(v) => setPackIndustry(v)}>
                 <SelectTrigger data-testid="select-pack-industry">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  {industryOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
+<SelectContent>
+                  <IndustrySelectItems includeAll />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Risk Level</label>

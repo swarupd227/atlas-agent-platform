@@ -1,3 +1,4 @@
+import { IndustrySelect, IndustrySelectItems } from "@/components/industry-select-items";
 import { useState, useMemo } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1829,27 +1830,17 @@ export default function HealingOperations() {
             </div>
             <div className="space-y-2">
               <Label>Industry</Label>
-              <Select
+              <IndustrySelect
                 value={newIssue.industry}
                 onValueChange={(v) => setNewIssue({ ...newIssue, industry: v as any })}
               >
                 <SelectTrigger data-testid="select-healing-industry">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="financial_services">Financial Services</SelectItem>
-                  <SelectItem value="healthcare">Healthcare</SelectItem>
-                  <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                  <SelectItem value="insurance">Insurance</SelectItem>
-                  <SelectItem value="retail">Retail</SelectItem>
-                  <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                  <SelectItem value="legal_services">Legal Services</SelectItem>
-                  {packIndustryOptions.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                  ))}
-                  <SelectItem value="cross_industry">Cross-Industry</SelectItem>
+<SelectContent>
+                  <IndustrySelectItems />
                 </SelectContent>
-              </Select>
+              </IndustrySelect>
             </div>
             <div className="space-y-2">
               <Label>Description</Label>
