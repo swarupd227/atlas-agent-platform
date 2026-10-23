@@ -1,0 +1,336 @@
+{
+  "base.allow": {
+    "what": "no config, no policies",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [],
+    "riskLevel": "MEDIUM"
+  },
+  "base.no_agent_row": {
+    "what": "agent row not found",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [],
+    "riskLevel": "medium"
+  },
+  "list.allow_hit": {
+    "what": "allow list names the tool",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [],
+    "riskLevel": "MEDIUM"
+  },
+  "list.allow_miss": {
+    "what": "allow list omits the tool",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' is not in the allowed tools list",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "not-in-allowed-list"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "list.deny": {
+    "what": "deny list names the tool",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' is in the denied tools list",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "denied-tool-list"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "list.deny_over_require": {
+    "what": "deny and require-approval both name it",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' is in the denied tools list",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "denied-tool-list"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "list.require_approval": {
+    "what": "require-approval list names the tool",
+    "decision": "REQUIRE_APPROVAL",
+    "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "require-approval-tool-list"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "order.allow_miss_over_rule": {
+    "what": "allow-list miss is decided before policy rules",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' is not in the allowed tools list",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [
+      "not-in-allowed-list"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "order.rule_over_require": {
+    "what": "block rule beats the require-approval list",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' blocked by policy rule 'no-tickets' (policy: Policy p1)",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [
+      "no-tickets"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rate.over_burst": {
+    "what": "third call with burst 2: rate limited",
+    "decision": "BLOCK",
+    "reason": "rate-limit-exceeded",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "rate-limit-exceeded"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rate.over_burst_on_denied_tool": {
+    "what": "rate limit is checked before the deny list",
+    "decision": "BLOCK",
+    "reason": "rate-limit-exceeded",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "rate-limit-exceeded"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rate.per_tool_limit": {
+    "what": "per-tool limit overrides the global one",
+    "decision": "BLOCK",
+    "reason": "rate-limit-exceeded",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "rate-limit-exceeded"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rate.within_burst": {
+    "what": "second call with burst 2: allowed",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [],
+    "riskLevel": "MEDIUM"
+  },
+  "risk.high_autonomous": {
+    "what": "HIGH + autonomous",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [],
+    "riskLevel": "HIGH"
+  },
+  "risk.high_lowercase_supervised": {
+    "what": "lower-case high + supervised",
+    "decision": "ALERT_AND_ALLOW",
+    "reason": "Tool 'create_ticket' invocation logged — agent is high-risk in supervised mode",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "high-risk-supervised-alert"
+    ],
+    "riskLevel": "high"
+  },
+  "risk.high_supervised": {
+    "what": "HIGH + supervised",
+    "decision": "ALERT_AND_ALLOW",
+    "reason": "Tool 'create_ticket' invocation logged — agent is high-risk in supervised mode",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy"
+    ],
+    "rulesTriggered": [
+      "high-risk-supervised-alert"
+    ],
+    "riskLevel": "HIGH"
+  },
+  "rule.block_args_match": {
+    "what": "block rule matching an arg value",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' blocked by policy rule 'no-p1' (policy: Policy p1)",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [
+      "no-p1"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.block_args_mismatch": {
+    "what": "block rule whose arg value differs",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.block_args_number_vs_string": {
+    "what": "arg rule compares as strings (1200 vs '1200')",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' blocked by policy rule 'amount-1200' (policy: Policy p1)",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [
+      "amount-1200"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.block_by_tool": {
+    "what": "block rule matching the tool name",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' blocked by policy rule 'no-tickets' (policy: Policy p1)",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [
+      "no-tickets"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.block_other_tool": {
+    "what": "block rule for a different tool",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.block_tool_array": {
+    "what": "block rule with a tool-name array",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' blocked by policy rule 'no-writes' (policy: Policy p1)",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [
+      "no-writes"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.inactive_policy": {
+    "what": "matching block rule on an inactive policy is ignored",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.non_block_match": {
+    "what": "matching rule without block: recorded, allowed",
+    "decision": "ALLOW",
+    "reason": "Action passed all constraint checks",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [
+      "watch"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.unconditional_block": {
+    "what": "rule with no condition blocks every tool",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' blocked by policy rule 'freeze' (policy: Policy p1)",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p1"
+    ],
+    "rulesTriggered": [
+      "freeze"
+    ],
+    "riskLevel": "MEDIUM"
+  },
+  "rule.unnamed": {
+    "what": "unnamed matching block rule gets a generated name",
+    "decision": "BLOCK",
+    "reason": "Tool 'create_ticket' blocked by policy rule 'policy-p9-rule' (policy: Policy p9)",
+    "policiesEvaluated": [
+      "constraint-list-policy",
+      "autonomy-policy",
+      "p9"
+    ],
+    "rulesTriggered": [
+      "policy-p9-rule"
+    ],
+    "riskLevel": "MEDIUM"
+  }
+}

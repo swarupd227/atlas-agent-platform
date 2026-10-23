@@ -158,6 +158,11 @@ describe("no execution path bypasses the dispatcher (per-caller closure)", () =>
     expect(aar).toMatch(/decision === "BLOCK"/);
   });
 
+  // S0.2 (unified policy decision point), commit C4: invoke-tool executes
+  // through dispatchToolCall instead of calling executeTool itself, so an AAR
+  // caller meets lockdown, idempotency, spans and the tool_invocations record.
+  it.todo("the AAR routes decide through the policy decision point and never call executeTool directly");
+
   it("the simulated proxyToolCall is gone from every route", () => {
     const offenders = files.filter(f => {
       const rel = f.replace(root, "").replace(/\\/g, "/").slice(1);

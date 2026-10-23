@@ -698,7 +698,7 @@ function matchesPolicyRule(
   return true;
 }
 
-async function evaluateActionAgainstConstraints(
+export async function evaluateActionAgainstConstraints(
   agentId: string,
   toolName: string,
   serverId: string | undefined,

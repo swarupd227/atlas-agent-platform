@@ -1,0 +1,4359 @@
+{
+  "aar.allow_hit": {
+    "what": "AAR allow list lists the tool: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.allow_miss": {
+    "what": "AAR allow list omits the tool",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'create_ticket' is not in the allowed tools list",
+      "error": "Tool 'create_ticket' is not in the allowed tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "BLOCK",
+          "reason": "Tool 'create_ticket' is not in the allowed tools list",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "not-in-allowed-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "BLOCK",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.config_throws": {
+    "what": "AAR config read throws: the exception escapes dispatchToolCall",
+    "result": null,
+    "threw": "connection terminated unexpectedly",
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": []
+    }
+  },
+  "aar.deny": {
+    "what": "AAR deny list names the tool",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'create_ticket' is in the denied tools list",
+      "error": "Tool 'create_ticket' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "BLOCK",
+          "reason": "Tool 'create_ticket' is in the denied tools list",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "denied-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "BLOCK",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.high_autonomous": {
+    "what": "HIGH tier + autonomous: no alert, executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "HIGH",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "HIGH",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.high_lowercase_supervised": {
+    "what": "lower-case 'high' + supervised: ALERT_AND_ALLOW, executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALERT_AND_ALLOW",
+          "reason": "Tool 'create_ticket' invocation logged — agent is high-risk in supervised mode",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "high-risk-supervised-alert"
+          ],
+          "riskLevel": "high",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALERT_AND_ALLOW",
+          "riskTier": "high",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.high_supervised": {
+    "what": "HIGH tier + supervised: ALERT_AND_ALLOW, executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALERT_AND_ALLOW",
+          "reason": "Tool 'create_ticket' invocation logged — agent is high-risk in supervised mode",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "high-risk-supervised-alert"
+          ],
+          "riskLevel": "HIGH",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALERT_AND_ALLOW",
+          "riskTier": "HIGH",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.human_approved": {
+    "what": "require-approval, human-approved this call (no standing grant): executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_human_approved",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "workspace-approval",
+          "objectType": "tool",
+          "objectId": "create_ticket",
+          "details": "Tool \"create_ticket\" required approval and was human-approved (approvalId=appr-human) for agent agent-1."
+        }
+      ],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'create_ticket'"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.no_config": {
+    "what": "no AAR config row: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.prior_rejected": {
+    "what": "require-approval with an earlier REJECTED decision: asks again",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+      "error": "Tool 'create_ticket' requires explicit approval before invocation",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": "REQUIRE_APPROVAL",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'create_ticket'"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.require_approval": {
+    "what": "AAR require-approval, no prior decision: approval created, not executed",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+      "error": "Tool 'create_ticket' requires explicit approval before invocation",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": "REQUIRE_APPROVAL",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'create_ticket'"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.require_approval_get": {
+    "what": "require-approval on a read-only tool: lower risk score",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Tool 'get_ticket' requires explicit approval before invocation",
+      "error": "Tool 'get_ticket' requires explicit approval before invocation",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": "REQUIRE_APPROVAL",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "get_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.4,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'get_ticket'"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "get_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'get_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": false,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.require_approval_high": {
+    "what": "require-approval on a HIGH-tier agent: higher risk score",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+      "error": "Tool 'create_ticket' requires explicit approval before invocation",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": "REQUIRE_APPROVAL",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.85,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'create_ticket'"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "HIGH",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "HIGH",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.require_approval_no_agent": {
+    "what": "require-approval when the agent row is missing: no approval row is created",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+      "error": "Tool 'create_ticket' requires explicit approval before invocation",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "REQUIRE_APPROVAL",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": null,
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": null
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "aar.standing_grant": {
+    "what": "require-approval with an earlier approved decision: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Tool 'create_ticket' was approved by alice and remains authorized",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list",
+            "previously-approved"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "base.allow": {
+    "what": "no restriction anywhere: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "base.allow_get": {
+    "what": "read-only GET tool, no restriction: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "get_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": false,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "base.no_agent_row": {
+    "what": "agent row not found, no restriction: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": null,
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": null
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "base.no_bundle": {
+    "what": "caller passes no policy bundle: policy gate skipped, executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "bundle.allowlist_hit": {
+    "what": "strict allowlist lists the tool: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "bundle.allowlist_miss": {
+    "what": "strict allowlist omits the tool",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" is not in the policy tool allowlist (strict enforcement)",
+      "error": "Tool \"create_ticket\" is not in the policy tool allowlist (strict enforcement)",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"create_ticket\" is not in the policy tool allowlist (strict enforcement)",
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "bundle.hard_blocked": {
+    "what": "strict policy blocks the tool by name",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "bundle.hard_blocked_case": {
+    "what": "block list matches case-insensitively",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "bundle.monitor_flagged": {
+    "what": "monitor policy flags the tool: logged, executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": true
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "policy_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"create_ticket\" is flagged by a monitor-mode policy (dispatch allowed)",
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "enforcementMode": "monitor",
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.attachment_read.aar_deny": {
+    "what": "attachment_read: an AAR deny naming it",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'read_attachment' is in the denied tools list",
+      "error": "Tool 'read_attachment' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.attachment_read.all_lists_omit": {
+    "what": "attachment_read: every allowlist omits it, warrant covers it, out of scope",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.attachment_read.policy_block": {
+    "what": "attachment_read: a strict policy blocking it by name",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"read_attachment\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"read_attachment\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"read_attachment\" is blocked by a strict/block-enforcement policy",
+            "toolName": "read_attachment",
+            "serverName": "builtin:attachments",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.attachment_read.shadow": {
+    "what": "attachment_read: in a shadow run",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.history_read.aar_deny": {
+    "what": "history_read: an AAR deny naming it",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'search_history' is in the denied tools list",
+      "error": "Tool 'search_history' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.history_read.all_lists_omit": {
+    "what": "history_read: every allowlist omits it, warrant covers it, out of scope",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.history_read.policy_block": {
+    "what": "history_read: a strict policy blocking it by name",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"search_history\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"search_history\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"search_history\" is blocked by a strict/block-enforcement policy",
+            "toolName": "search_history",
+            "serverName": "builtin:history",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.history_read.shadow": {
+    "what": "history_read: in a shadow run",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.memory_propose.aar_deny": {
+    "what": "memory_propose: an AAR deny naming it",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'propose_memory' is in the denied tools list",
+      "error": "Tool 'propose_memory' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.memory_propose.all_lists_omit": {
+    "what": "memory_propose: every allowlist omits it, warrant covers it, out of scope",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.memory_propose.policy_block": {
+    "what": "memory_propose: a strict policy blocking it by name",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"propose_memory\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"propose_memory\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"propose_memory\" is blocked by a strict/block-enforcement policy",
+            "toolName": "propose_memory",
+            "serverName": "builtin:memory",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.memory_propose.shadow": {
+    "what": "memory_propose: in a shadow run",
+    "result": {
+      "outcome": "shadow_skipped",
+      "ok": false,
+      "reason": "Shadow environment — dispatch skipped",
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_proxy_shadow_dry_run",
+          "organizationId": null,
+          "actorType": "agent",
+          "actorId": "agent-1",
+          "objectType": "tool",
+          "objectId": "propose_memory",
+          "details": "Shadow dry-run: propose_memory for agent agent-1. Input logged but not executed."
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "shadow_skipped",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.ontology_propose.aar_deny": {
+    "what": "ontology_propose: an AAR deny naming it",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'propose_ontology_concept' is in the denied tools list",
+      "error": "Tool 'propose_ontology_concept' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.ontology_propose.all_lists_omit": {
+    "what": "ontology_propose: every allowlist omits it, warrant covers it, out of scope",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.ontology_propose.policy_block": {
+    "what": "ontology_propose: a strict policy blocking it by name",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"propose_ontology_concept\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"propose_ontology_concept\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"propose_ontology_concept\" is blocked by a strict/block-enforcement policy",
+            "toolName": "propose_ontology_concept",
+            "serverName": "builtin:ontology-proposals",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.ontology_propose.shadow": {
+    "what": "ontology_propose: in a shadow run",
+    "result": {
+      "outcome": "shadow_skipped",
+      "ok": false,
+      "reason": "Shadow environment — dispatch skipped",
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_proxy_shadow_dry_run",
+          "organizationId": null,
+          "actorType": "agent",
+          "actorId": "agent-1",
+          "objectType": "tool",
+          "objectId": "propose_ontology_concept",
+          "details": "Shadow dry-run: propose_ontology_concept for agent agent-1. Input logged but not executed."
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "shadow_skipped",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.skill_propose.aar_deny": {
+    "what": "skill_propose: an AAR deny naming it",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'propose_skill' is in the denied tools list",
+      "error": "Tool 'propose_skill' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.skill_propose.all_lists_omit": {
+    "what": "skill_propose: every allowlist omits it, warrant covers it, out of scope",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.skill_propose.policy_block": {
+    "what": "skill_propose: a strict policy blocking it by name",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"propose_skill\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"propose_skill\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"propose_skill\" is blocked by a strict/block-enforcement policy",
+            "toolName": "propose_skill",
+            "serverName": "builtin:skill-proposals",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.skill_propose.shadow": {
+    "what": "skill_propose: in a shadow run",
+    "result": {
+      "outcome": "shadow_skipped",
+      "ok": false,
+      "reason": "Shadow environment — dispatch skipped",
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_proxy_shadow_dry_run",
+          "organizationId": null,
+          "actorType": "agent",
+          "actorId": "agent-1",
+          "objectType": "tool",
+          "objectId": "propose_skill",
+          "details": "Shadow dry-run: propose_skill for agent agent-1. Input logged but not executed."
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "shadow_skipped",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.skill_read.aar_deny": {
+    "what": "skill_read: an AAR deny naming it",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'read_skill' is in the denied tools list",
+      "error": "Tool 'read_skill' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.skill_read.all_lists_omit": {
+    "what": "skill_read: every allowlist omits it, warrant covers it, out of scope",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.skill_read.policy_block": {
+    "what": "skill_read: a strict policy blocking it by name",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"read_skill\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"read_skill\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"read_skill\" is blocked by a strict/block-enforcement policy",
+            "toolName": "read_skill",
+            "serverName": "builtin:skills",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "exempt.skill_read.shadow": {
+    "what": "skill_read: in a shadow run",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "lockdown.connector_allowed": {
+    "what": "connector kind in connectors.allow: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "lockdown.connector_blocked": {
+    "what": "connector kind not in connectors.allow",
+    "result": {
+      "outcome": "gate_blocked_lockdown",
+      "ok": false,
+      "reason": "The \"openapi\" connector type is disabled by this deployment's platform policy",
+      "error": "The \"openapi\" connector type is disabled by this deployment's platform policy",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_lockdown",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "platform_lockdown",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "connectorKind": "openapi",
+            "reason": "The \"openapi\" connector type is disabled by this deployment's platform policy",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_lockdown",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "lockdown.documents_off": {
+    "what": "document tool while nativeTools.documents is off",
+    "result": {
+      "outcome": "gate_blocked_lockdown",
+      "ok": false,
+      "reason": "Document generation is disabled by this deployment's platform policy",
+      "error": "Document generation is disabled by this deployment's platform policy",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_lockdown",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "platform_lockdown",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "generate_pdf",
+            "serverName": "builtin:document",
+            "connectorKind": "documents",
+            "reason": "Document generation is disabled by this deployment's platform policy",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_lockdown",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "lockdown.documents_on": {
+    "what": "document tool with documents on: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "generate_pdf",
+          "serverId": "builtin:document",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.aar_deny_over_require": {
+    "what": "AAR deny and require-approval lists both name it",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'create_ticket' is in the denied tools list",
+      "error": "Tool 'create_ticket' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "BLOCK",
+          "reason": "Tool 'create_ticket' is in the denied tools list",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "denied-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "BLOCK",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.aar_deny_over_warrant": {
+    "what": "AAR deny and warrant requires approval: no warrant approval",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'create_ticket' is in the denied tools list",
+      "error": "Tool 'create_ticket' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "BLOCK",
+          "reason": "Tool 'create_ticket' is in the denied tools list",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "denied-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "BLOCK",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.aar_require_over_warrant_denied": {
+    "what": "AAR require-approval and warrant denied: approval, warrant not reached",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+      "error": "Tool 'create_ticket' requires explicit approval before invocation",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": "REQUIRE_APPROVAL",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'create_ticket'"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.alert_then_warrant_denied": {
+    "what": "high-risk alert and warrant denied: blocked",
+    "result": {
+      "outcome": "gate_blocked_warrant",
+      "ok": false,
+      "reason": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+      "error": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": "BLOCK",
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALERT_AND_ALLOW",
+          "reason": "Tool 'create_ticket' invocation logged — agent is high-risk in supervised mode",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "high-risk-supervised-alert"
+          ],
+          "riskLevel": "HIGH",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALERT_AND_ALLOW",
+          "riskTier": "HIGH",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_warrant",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.approval_over_shadow": {
+    "what": "AAR require-approval in a shadow run: approval, not a dry run",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+      "error": "Tool 'create_ticket' requires explicit approval before invocation",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": "REQUIRE_APPROVAL",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'create_ticket'"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.bundle_allow_hit_aar_allow_miss": {
+    "what": "policy allowlist lists it, AAR allowlist omits it",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'create_ticket' is not in the allowed tools list",
+      "error": "Tool 'create_ticket' is not in the allowed tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "BLOCK",
+          "reason": "Tool 'create_ticket' is not in the allowed tools list",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "not-in-allowed-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "BLOCK",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.bundle_over_aar": {
+    "what": "strict block and AAR deny: AAR never evaluated",
+    "result": {
+      "outcome": "gate_blocked_policy",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+      "error": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+      "policyIds": [
+        "pol-strict"
+      ],
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "hard_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"create_ticket\" is blocked by a strict/block-enforcement policy",
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "enforcementMode": "strict/block",
+            "policyCount": 2,
+            "appliedPolicies": [
+              {
+                "id": "pol-strict",
+                "name": "Strict Tools",
+                "version": 1,
+                "enforcement": "strict"
+              },
+              {
+                "id": "pol-monitor",
+                "name": "Monitor Tools",
+                "version": 1,
+                "enforcement": "monitor"
+              }
+            ],
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_policy",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.human_approved_both": {
+    "what": "human approval satisfies both AAR and warrant approval",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_human_approved",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "workspace-approval",
+          "objectType": "tool",
+          "objectId": "create_ticket",
+          "details": "Tool \"create_ticket\" required approval and was human-approved (approvalId=appr-human) for agent agent-1."
+        },
+        {
+          "action": "tool_human_approved",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "workspace-approval",
+          "objectType": "tool",
+          "objectId": "create_ticket",
+          "details": "Tool \"create_ticket\" required warrant approval and was human-approved (approvalId=appr-human) for agent agent-1."
+        }
+      ],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'create_ticket'"
+        },
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": "risk_officer",
+          "requestedBy": "agent-1",
+          "description": "Warrant gate: agent 'Claims Agent' requires approval to call tool 'create_ticket' under task class \"Claims Handling\" (warrant grants=requires_approval)"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.human_approved_then_warrant_denied": {
+    "what": "human approval passes AAR but not a denying warrant",
+    "result": {
+      "outcome": "gate_blocked_warrant",
+      "ok": false,
+      "reason": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+      "error": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": "BLOCK",
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_human_approved",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "workspace-approval",
+          "objectType": "tool",
+          "objectId": "create_ticket",
+          "details": "Tool \"create_ticket\" required approval and was human-approved (approvalId=appr-human) for agent agent-1."
+        }
+      ],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "AAR policy gate: agent 'Claims Agent' requires approval to call tool 'create_ticket'"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "REQUIRE_APPROVAL",
+          "reason": "Tool 'create_ticket' requires explicit approval before invocation",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": "approval-1"
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "REQUIRE_APPROVAL",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_warrant",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.lockdown_over_skill": {
+    "what": "lockdown and skill miss",
+    "result": {
+      "outcome": "gate_blocked_lockdown",
+      "ok": false,
+      "reason": "The \"openapi\" connector type is disabled by this deployment's platform policy",
+      "error": "The \"openapi\" connector type is disabled by this deployment's platform policy",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_lockdown",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "platform_lockdown",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "connectorKind": "openapi",
+            "reason": "The \"openapi\" connector type is disabled by this deployment's platform policy",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_lockdown",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.monitor_then_aar_deny": {
+    "what": "monitor flag and AAR deny: blocked, still flagged",
+    "result": {
+      "outcome": "gate_blocked_aar",
+      "ok": false,
+      "reason": "Tool 'create_ticket' is in the denied tools list",
+      "error": "Tool 'create_ticket' is in the denied tools list",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": "BLOCK",
+      "warrantDecision": null,
+      "monitorFlagged": true
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "policy_violation",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "policy-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "blockReason": "Tool \"create_ticket\" is flagged by a monitor-mode policy (dispatch allowed)",
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "enforcementMode": "monitor",
+            "iteration": 1
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "BLOCK",
+          "reason": "Tool 'create_ticket' is in the denied tools list",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "denied-tool-list"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "BLOCK",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_aar",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.scope_over_rate": {
+    "what": "scope miss on the 101st call: scope refusal",
+    "result": {
+      "outcome": "gate_blocked_scope_drift",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+      "error": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_scope_drift",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "scope-gate",
+          "objectType": "agent",
+          "objectId": "agent-rate-c",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "declaredScope": [
+              "other_tool"
+            ],
+            "reason": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_scope_drift",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.scope_over_shadow": {
+    "what": "scope miss in a shadow run: scope refusal, not a dry run",
+    "result": {
+      "outcome": "gate_blocked_scope_drift",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+      "error": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_scope_drift",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "scope-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "declaredScope": [
+              "other_tool"
+            ],
+            "reason": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_scope_drift",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.skill_over_bundle": {
+    "what": "skill miss and strict block",
+    "result": {
+      "outcome": "gate_blocked_skill",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+      "error": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_skill",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "skill-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_skill",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.standing_grant_both": {
+    "what": "one earlier approval satisfies both AAR and warrant approval",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Tool 'create_ticket' was approved by alice and remains authorized",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [
+            "require-approval-tool-list",
+            "previously-approved"
+          ],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "prec.warrant_over_scope": {
+    "what": "warrant requires approval and scope miss: approval",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Task class \"Claims Handling\" warrant requires approval for tool \"create_ticket\"",
+      "error": "Task class \"Claims Handling\" warrant requires approval for tool \"create_ticket\"",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": null,
+      "warrantDecision": "REQUIRE_APPROVAL",
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": "risk_officer",
+          "requestedBy": "agent-1",
+          "description": "Warrant gate: agent 'Claims Agent' requires approval to call tool 'create_ticket' under task class \"Claims Handling\" (warrant grants=requires_approval)"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "rate.call_100": {
+    "what": "the 100th call in a minute: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "rate.call_101": {
+    "what": "the 101st call in a minute: rate limited",
+    "result": {
+      "outcome": "rate_limited",
+      "ok": false,
+      "reason": "Rate limit exceeded for tool \"create_ticket\". Retry after <n>ms",
+      "error": "Rate limit exceeded for tool \"create_ticket\". Retry after <n>ms",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_proxy_rate_limited",
+          "organizationId": null,
+          "actorType": "agent",
+          "actorId": "agent-rate-b",
+          "objectType": "tool",
+          "objectId": "create_ticket",
+          "details": "Rate limit exceeded for create_ticket by agent agent-rate-b. Retry after <n>ms"
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "rate_limited",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "scope.empty": {
+    "what": "empty declared scope disables the gate: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "scope.in": {
+    "what": "tool inside the declared scope: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "scope.out": {
+    "what": "tool outside the declared scope",
+    "result": {
+      "outcome": "gate_blocked_scope_drift",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+      "error": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_scope_drift",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "scope-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "declaredScope": [
+              "other_tool"
+            ],
+            "reason": "Tool \"create_ticket\" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_scope_drift",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "shadow.on": {
+    "what": "shadow run: dry run, never executes",
+    "result": {
+      "outcome": "shadow_skipped",
+      "ok": false,
+      "reason": "Shadow environment — dispatch skipped",
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_proxy_shadow_dry_run",
+          "organizationId": null,
+          "actorType": "agent",
+          "actorId": "agent-1",
+          "objectType": "tool",
+          "objectId": "create_ticket",
+          "details": "Shadow dry-run: create_ticket for agent agent-1. Input logged but not executed."
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "shadow_skipped",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "skill.empty_set": {
+    "what": "empty skill allowlist set refuses everything",
+    "result": {
+      "outcome": "gate_blocked_skill",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+      "error": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_skill",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "skill-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_skill",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "skill.listed": {
+    "what": "skill allowlist lists the tool: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "skill.missing": {
+    "what": "skill allowlist omits the tool",
+    "result": {
+      "outcome": "gate_blocked_skill",
+      "ok": false,
+      "reason": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+      "error": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": null
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_blocked_skill",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "skill-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool \"create_ticket\" is not granted by any active skill (skill allowlist enforcement)",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
+      "approvals": [],
+      "aarActionDecisions": [],
+      "approvalRiskShadow": [],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_skill",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.autonomous": {
+    "what": "warrant grants autonomous: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.denied": {
+    "what": "active warrant grants denied",
+    "result": {
+      "outcome": "gate_blocked_warrant",
+      "ok": false,
+      "reason": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+      "error": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": "BLOCK",
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_warrant",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.human_approved": {
+    "what": "warrant requires approval, human-approved this call: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [
+        {
+          "action": "tool_human_approved",
+          "organizationId": null,
+          "actorType": "system",
+          "actorId": "workspace-approval",
+          "objectType": "tool",
+          "objectId": "create_ticket",
+          "details": "Tool \"create_ticket\" required warrant approval and was human-approved (approvalId=appr-human) for agent agent-1."
+        }
+      ],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": "risk_officer",
+          "requestedBy": "agent-1",
+          "description": "Warrant gate: agent 'Claims Agent' requires approval to call tool 'create_ticket' under task class \"Claims Handling\" (warrant grants=requires_approval)"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.none_active": {
+    "what": "covering task class with no active warrant",
+    "result": {
+      "outcome": "gate_blocked_warrant",
+      "ok": false,
+      "reason": "No active warrant grants task class \"Claims Handling\" (tool \"create_ticket\") -- authority has expired or was never issued",
+      "error": "No active warrant grants task class \"Claims Handling\" (tool \"create_ticket\") -- authority has expired or was never issued",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": "BLOCK",
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_warrant",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.not_covered": {
+    "what": "task class does not cover the tool: no-op, executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.requires_approval": {
+    "what": "warrant requires approval: approval with reviewer role",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Task class \"Claims Handling\" warrant requires approval for tool \"create_ticket\"",
+      "error": "Task class \"Claims Handling\" warrant requires approval for tool \"create_ticket\"",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": null,
+      "warrantDecision": "REQUIRE_APPROVAL",
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": "risk_officer",
+          "requestedBy": "agent-1",
+          "description": "Warrant gate: agent 'Claims Agent' requires approval to call tool 'create_ticket' under task class \"Claims Handling\" (warrant grants=requires_approval)"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.requires_approval_no_role": {
+    "what": "warrant requires approval, task class sets no reviewer role",
+    "result": {
+      "outcome": "gate_requires_approval",
+      "ok": false,
+      "reason": "Task class \"Claims Handling\" warrant requires approval for tool \"create_ticket\"",
+      "error": "Task class \"Claims Handling\" warrant requires approval for tool \"create_ticket\"",
+      "policyIds": null,
+      "approvalId": "approval-1",
+      "aarDecision": null,
+      "warrantDecision": "REQUIRE_APPROVAL",
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [
+        {
+          "type": "tool-invocation",
+          "objectType": "mcp-tool",
+          "objectId": "srv-1",
+          "objectName": "create_ticket",
+          "organizationId": "org-1",
+          "agentId": null,
+          "riskScore": 0.65,
+          "requiredReviewerRole": null,
+          "requestedBy": "agent-1",
+          "description": "Warrant gate: agent 'Claims Agent' requires approval to call tool 'create_ticket' under task class \"Claims Handling\" (warrant grants=requires_approval)"
+        }
+      ],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_requires_approval",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.requires_approval_standing": {
+    "what": "warrant requires approval, earlier approved decision: executes",
+    "result": {
+      "outcome": "success",
+      "ok": true,
+      "reason": null,
+      "error": null,
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": null,
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": true,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "success",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  },
+  "warrant.two_classes_autonomous_then_denied": {
+    "what": "two covering classes, autonomous then denied: blocked",
+    "result": {
+      "outcome": "gate_blocked_warrant",
+      "ok": false,
+      "reason": "Task class \"Fraud Review\" warrant denies tool \"create_ticket\"",
+      "error": "Task class \"Fraud Review\" warrant denies tool \"create_ticket\"",
+      "policyIds": null,
+      "approvalId": null,
+      "aarDecision": null,
+      "warrantDecision": "BLOCK",
+      "monitorFlagged": false
+    },
+    "threw": null,
+    "executed": false,
+    "effects": {
+      "auditEvents": [],
+      "approvals": [],
+      "aarActionDecisions": [
+        {
+          "orgId": "org-1",
+          "toolName": "create_ticket",
+          "serverId": "srv-1",
+          "decision": "ALLOW",
+          "reason": "Action passed all constraint checks",
+          "policiesEvaluated": [
+            "constraint-list-policy",
+            "autonomy-policy"
+          ],
+          "rulesTriggered": [],
+          "riskLevel": "MEDIUM",
+          "approvalId": null
+        }
+      ],
+      "approvalRiskShadow": [
+        {
+          "decision": "ALLOW",
+          "riskTier": "MEDIUM",
+          "sideEffectful": true,
+          "orgId": "org-1"
+        }
+      ],
+      "toolInvocations": [
+        {
+          "outcome": "gate_blocked_warrant",
+          "organizationId": "org-1"
+        }
+      ]
+    }
+  }
+}
