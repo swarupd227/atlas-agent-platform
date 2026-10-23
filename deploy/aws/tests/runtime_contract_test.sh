@@ -82,6 +82,9 @@ remote_script="$ASTRA_STATE_ROOT/demo/deploy-container.sh"
 if grep -Fq "@${EXPECTED_DIGEST}" "$remote_script" &&
    grep -Fq 'docker rename astra-agents astra-agents-rollback' "$remote_script" &&
    grep -Fq 'restore_previous_container' "$remote_script" &&
+   grep -Fq -- '--cap-drop ALL' "$remote_script" &&
+   grep -Fq -- '--security-opt no-new-privileges:true' "$remote_script" &&
+   grep -Fq -- '--tmpfs /tmp:rw,noexec,nosuid,size=128m' "$remote_script" &&
    grep -Fq "jq -r 'to_entries[]" "$remote_script" &&
    grep -Fq 'NODE_EXTRA_CA_CERTS=/etc/ssl/certs/aws-rds-global-bundle.pem' "$remote_script" &&
    grep -Fq 'http://127.0.0.1:5000/health' "$remote_script"; then
