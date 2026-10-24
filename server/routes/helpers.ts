@@ -2,6 +2,7 @@ import { ZodError, z } from "zod";
 import { completeWithFallback } from "../llm-provider";
 import { storage } from "../storage";
 import { getDefaultOrgId } from "../auth";
+import type { PolicyRule } from "../policy-decision";
 import { callClaude, stripJsonFences } from "../claude";
 import { insertEvalTestCaseSchema } from "@shared/schema";
 import { breachesThreshold, countGuardrailFlags, parseMeasurementSource, statisticValue, trendBetween, type AgentRunsSource, type RunWindow } from "@shared/kpi-measurement";
@@ -1418,6 +1419,20 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
     if (Array.isArray(pj.redactPatterns)) redactPatterns.push(...(pj.redactPatterns as string[]));
   }
 
+  // Arg-level block rules (policyJson.rules entries with block: true), from the
+  // agent's OWN policies only -- the set the AAR route has always evaluated --
+  // so the policy decision point (server/policy-decision.ts) can apply them to
+  // native runs as well. Org-wide policies' rules are deliberately not collected:
+  // 71 of 75 active org policies reach every agent, and widening is its own change.
+  const blockRules: Array<{ policyId: string; policyName: string; rule: PolicyRule }> = [];
+  for (const p of agentPolicies) {
+    const rules = (p.policyJson as { rules?: unknown } | null)?.rules;
+    if (!Array.isArray(rules)) continue;
+    for (const rule of rules as PolicyRule[]) {
+      if (rule && typeof rule === "object" && rule.block === true) blockRules.push({ policyId: p.id, policyName: p.name, rule });
+    }
+  }
+
   return {
     appliedPolicies: allScoped.map(p => ({
       id: p.id,
@@ -1448,6 +1463,7 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
     blockedToolsToPolicyIds,
     guardrails: Array.from(new Set(guardrails)),
     redactPatterns: Array.from(new Set(redactPatterns)),
+    blockRules,
     agentConfig: agent ? {
       autonomyMode: agent.autonomyMode,
       riskTier: agent.riskTier,
