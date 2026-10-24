@@ -23,6 +23,7 @@ import {
   auditEvents,
   type InsertAuditEvent,
 } from "@shared/schema";
+import { industryDisplayName } from "@shared/industry-filter";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import {
   checkPermission,
@@ -83,6 +84,7 @@ router.use(billingRouter);
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { policyName, domain, description, framework, industry, existingRules } = req.body;
+      const industryLabel = industryDisplayName(industry);
       if (!policyName || !domain) {
         return res.status(400).json({ error: "policyName and domain are required" });
       }
@@ -101,14 +103,14 @@ Your output must be a single valid JSON object with a "rules" array. Each rule s
 - "enforcement": "block" | "warn" | "audit" | "require_approval"
 - "remediation": what to do when the rule is violated
 
-Be thorough and specific to the ${industry || "general"} industry and ${framework || "general"} regulatory framework. Include at least 4-6 detailed rules per policy. Use realistic thresholds, identifiers, and terminology from the actual regulatory framework.`,
+Be thorough and specific to the ${industryLabel} industry and ${framework || "general"} regulatory framework. Include at least 4-6 detailed rules per policy. Use realistic thresholds, identifiers, and terminology from the actual regulatory framework.`,
         user: `Enhance and deeply enrich the following policy rules for production use:
 
 Policy Name: ${policyName}
 Domain: ${domain}
 Description: ${effectiveDescription}
 Framework: ${framework || "General"}
-Industry: ${industry || "General"}
+Industry: ${industryLabel}
 
 Current (basic) rules:
 ${JSON.stringify(existingRules, null, 2)}`,
@@ -176,6 +178,7 @@ ${JSON.stringify(existingRules, null, 2)}`,
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { conceptId, label, category, description, industry, ontologyName, properties, relationships } = req.body;
+      const industryLabel = industryDisplayName(industry);
       if (!label || !category || !description) {
         return res.status(400).json({ error: "label, category, and description are required" });
       }
@@ -193,10 +196,10 @@ ${JSON.stringify(existingRules, null, 2)}`,
         : "";
 
       const conceptRaw = await callClaude({
-        system: `You are a domain expert in ${ontologyName || "industry"} ontology and ${industry || "enterprise"} operations. You specialize in explaining how ontology concepts relate to AI agent lifecycle management.
+        system: `You are a domain expert in ${ontologyName || "industry"} ontology and ${industryLabel} operations. You specialize in explaining how ontology concepts relate to AI agent lifecycle management.
 
 When given an ontology concept, produce a comprehensive JSON enrichment with ALL of these fields:
-- "enrichedDescription": A detailed 3-5 sentence explanation of the concept in the context of ${industry || "enterprise"} operations
+- "enrichedDescription": A detailed 3-5 sentence explanation of the concept in the context of ${industryLabel} operations
 - "regulatoryRelevance": How this concept relates to regulatory compliance requirements
 - "agentUseCases": Array of 3-5 specific use cases where AI agents would leverage this specific concept (not generic category-level use cases)
 - "dataHandlingConsiderations": Privacy, security, and data classification considerations
@@ -208,7 +211,7 @@ When given an ontology concept, produce a comprehensive JSON enrichment with ALL
 - "suggestedTags": Array of 3-5 additional classification tags for this concept. Only suggest tags NOT already present in the existing tags.
 - "agentSkills": Array of 3-5 specific skills an AI agent would need to work with THIS concept (e.g., "Trade Lifecycle Tracking", "Counterparty Exposure Calculation"). Be concept-specific, not generic.
 - "agentTypes": Array of 2-4 specific AI agent types that would directly operate on THIS concept (e.g., "Derivatives Pricing Agent", "Settlement Reconciliation Agent"). Be concept-specific, not generic.`,
-        user: `Enrich the following ${ontologyName || "ontology"} concept for ${industry || "enterprise"} AI agent operations:
+        user: `Enrich the following ${ontologyName || "ontology"} concept for ${industryLabel} AI agent operations:
 
 Concept: ${label}
 Category: ${category}
@@ -475,12 +478,13 @@ Use real ${subdomain} terminology, standards, and frameworks. For credit rating 
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { regulationName, industry, jurisdictions, requirements } = req.body;
+      const industryLabel = industryDisplayName(industry);
       if (!regulationName || !industry) {
         return res.status(400).json({ error: "regulationName and industry are required" });
       }
 
       const regulationRaw = await callClaude({
-        system: `You are a regulatory compliance expert specializing in ${industry} industry regulations. You help organizations understand and implement regulatory requirements for AI agent operations.
+        system: `You are a regulatory compliance expert specializing in ${industryLabel} industry regulations. You help organizations understand and implement regulatory requirements for AI agent operations.
 
 When given a regulation, produce a comprehensive JSON enrichment with these fields:
 - "overview": A detailed 3-5 sentence overview of the regulation and its purpose
@@ -493,7 +497,7 @@ When given a regulation, produce a comprehensive JSON enrichment with these fiel
         user: `Provide detailed regulatory enrichment for:
 
 Regulation: ${regulationName}
-Industry: ${industry}
+Industry: ${industryLabel}
 Jurisdictions: ${JSON.stringify(jurisdictions || [])}
 Known Requirements: ${JSON.stringify(requirements || [])}`,
         maxTokens: 3000,
@@ -519,6 +523,7 @@ Known Requirements: ${JSON.stringify(requirements || [])}`,
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { packName, framework, description, industry, riskLevel, existingPolicies } = req.body;
+      const industryLabel = industryDisplayName(industry);
       if (!packName || !framework) {
         return res.status(400).json({ error: "packName and framework are required" });
       }
@@ -538,7 +543,7 @@ Return a JSON object with:
 
 Pack Name: ${packName}
 Framework: ${framework}
-Industry: ${industry || "cross_industry"}
+Industry: ${industryLabel}
 Risk Level: ${riskLevel || "high"}
 Description: ${description || "No description provided"}
 Existing Policies: ${JSON.stringify(existingPolicies || [])}`,
@@ -565,12 +570,13 @@ Existing Policies: ${JSON.stringify(existingPolicies || [])}`,
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { regulationName, industry, requirements, jurisdictions } = req.body;
+      const industryLabel = industryDisplayName(industry);
       if (!regulationName || !industry) {
         return res.status(400).json({ error: "regulationName and industry are required" });
       }
 
       const regPoliciesRaw = await callClaude({
-        system: `You are an expert in AI governance policy design for ${industry} organizations. You create production-grade policy configurations that implement regulatory requirements.
+        system: `You are an expert in AI governance policy design for ${industryLabel} organizations. You create production-grade policy configurations that implement regulatory requirements.
 
 When given a regulation, generate a JSON object with a "policies" array. Each policy should have:
 - "name": descriptive policy name
@@ -587,7 +593,7 @@ Generate 3-5 comprehensive policies per regulation. Use realistic regulatory ide
         user: `Generate compliance policies for:
 
 Regulation: ${regulationName}
-Industry: ${industry}
+Industry: ${industryLabel}
 Jurisdictions: ${JSON.stringify(jurisdictions || [])}
 Key Requirements: ${JSON.stringify(requirements || [])}`,
         maxTokens: 4000,
@@ -613,6 +619,7 @@ Key Requirements: ${JSON.stringify(requirements || [])}`,
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { agentName, agentDescription, agentSkills, industry, industryId, subVertical, ontologyName } = req.body;
+      const industryLabel = industryDisplayName(industry);
       if (!agentName || !agentDescription || !industry) {
         return res.status(400).json({ error: "agentName, agentDescription, and industry are required" });
       }
@@ -653,7 +660,7 @@ Key Requirements: ${JSON.stringify(requirements || [])}`,
       const candidateSummary = rankedCandidates.map((c) => ({ id: c.id, label: c.label, category: c.category, description: c.description }));
 
       const tagsRaw = await callClaude({
-        system: `You are a domain expert in ${ontologyName || "industry"} ontology for ${industry} operations. Given an AI agent's description and skills, and a real list of ontology concepts that exist in this platform, choose which of THOSE concepts (only) this agent should be tagged with.
+        system: `You are a domain expert in ${ontologyName || "industry"} ontology for ${industryLabel} operations. Given an AI agent's description and skills, and a real list of ontology concepts that exist in this platform, choose which of THOSE concepts (only) this agent should be tagged with.
 
 CANDIDATE CONCEPTS (choose only from this list -- do not invent new ones):
 ${JSON.stringify(candidateSummary)}
@@ -668,7 +675,7 @@ Suggest 5-8 relevant ontology tags and enrich 3-5 skills with domain terminology
 Agent Name: ${agentName}
 Description: ${agentDescription}
 Skills: ${JSON.stringify(agentSkills || [])}
-Industry: ${industry}
+Industry: ${industryLabel}
 Ontology: ${ontologyName || "industry standard"}`,
         maxTokens: 1500,
         jsonMode: true,
