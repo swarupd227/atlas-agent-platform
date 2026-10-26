@@ -74,6 +74,10 @@ import mbGuidelinesRouter from "./mock-mcp/mb-guidelines";
 import mbCreLoansRouter from "./mock-mcp/mbcre-loans";
 import mbCreFinancialsRouter from "./mock-mcp/mbcre-financials";
 import mbCrePolicyRouter from "./mock-mcp/mbcre-policy";
+import wmPortfolioRouter from "./mock-mcp/wm-portfolio";
+import wmCustodianRouter from "./mock-mcp/wm-custodian";
+import wmOnboardingRouter from "./mock-mcp/wm-onboarding";
+import { planning as wmPlanningRouter, crm as wmCrmRouter, performance as wmPerformanceRouter } from "./mock-mcp/wm-advice";
 import wcWorkbenchRouter from "./mock-mcp/wc-workbench";
 import wcClassBureauRouter from "./mock-mcp/wc-class-bureau";
 import insurityWcRatingRouter from "./mock-mcp/insurity-wc-rating";
@@ -398,6 +402,13 @@ export async function registerRoutes(
   app.use("/api/mock/mbcre-loans", mbCreLoansRouter);
   app.use("/api/mock/mbcre-financials", mbCreFinancialsRouter);
   app.use("/api/mock/mbcre-policy", mbCrePolicyRouter);
+  // Harborview Wealth Partners wealth management (fixture mode): one seed, six systems.
+  app.use("/api/mock/wm-portfolio", wmPortfolioRouter);
+  app.use("/api/mock/wm-custodian", wmCustodianRouter);
+  app.use("/api/mock/wm-onboarding", wmOnboardingRouter);
+  app.use("/api/mock/wm-planning", wmPlanningRouter);
+  app.use("/api/mock/wm-crm", wmCrmRouter);
+  app.use("/api/mock/wm-performance", wmPerformanceRouter);
   // Workers' Compensation underwriting (fixture mode): one seed, five systems.
   app.use("/api/mock/wc-workbench", wcWorkbenchRouter);
   app.use("/api/mock/wc-class-bureau", wcClassBureauRouter);

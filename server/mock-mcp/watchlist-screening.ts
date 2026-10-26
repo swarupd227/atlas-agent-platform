@@ -17,6 +17,12 @@ import { Router, type Request, type Response } from "express";
  * screening timestamp, because a clean screen against a stale list is not
  * evidence of compliance -- the agent is expected to report those alongside
  * the verdict.
+ *
+ * A politically exposed person (PEP) list is checked alongside and reported in
+ * its own `pep` section. Being a PEP is not a sanctions hit and never changes
+ * the sanctions verdict: it means enhanced due diligence by compliance. The
+ * PEP entries are kept out of LIST_ENTRIES on purpose, so the entry a hashed
+ * near-match falls back to is the same as before the list existed.
  */
 
 const router = Router();
@@ -45,6 +51,13 @@ interface ListEntry {
   programs: string[];
   remarks: string;
 }
+
+/** Politically exposed persons (fictional people). Checked by name and alias; reported separately from sanctions. */
+const PEP_LIST = { listId: "PEP_FIXTURE", name: "Politically Exposed Persons (fixture)", authority: "Compiled from public-office records (fixture)", version: "2026.10.01", lastUpdated: "2026-10-01" };
+const PEP_ENTRIES = [
+  { entryId: "PEP-CL-0412", name: "Elena Castellano Ruiz", aliases: ["Elena Castellano"], dateOfBirth: "1961-07-22", country: "CL", position: "Former Deputy Minister of Finance (2006-2010)", category: "foreign_pep" },
+  { entryId: "PEP-US-0088", name: "Robert J. Whitlock", aliases: [], dateOfBirth: "1958-03-30", country: "US", position: "Former state treasurer", category: "domestic_pep" },
+];
 
 const LIST_ENTRIES: ListEntry[] = [
   {
@@ -280,8 +293,13 @@ router.post("/screen-party", (req: Request, res: Response) => {
     };
   }
 
-  screenings.set(record.screeningId, record);
-  res.json(record);
+  const key = normalise(fullName);
+  const pepEntry = PEP_ENTRIES.find((e) => normalise(e.name) === key || e.aliases.some((a) => normalise(a) === key));
+  const pep = pepEntry
+    ? { status: "pep", list: PEP_LIST, entry: pepEntry, guidance: "Politically exposed person: enhanced due diligence by a named compliance officer before the relationship proceeds. This is not a sanctions hit and does not by itself prohibit business." }
+    : { status: "not_pep", list: PEP_LIST };
+  screenings.set(record.screeningId, { ...record, pep } as ScreeningRecord);
+  res.json({ ...record, pep });
 });
 
 router.get("/screening-result", (req: Request, res: Response) => {
@@ -297,6 +315,7 @@ router.get("/screening-result", (req: Request, res: Response) => {
 router.get("/watchlists", (_req: Request, res: Response) => {
   res.json({
     lists: WATCHLISTS,
+    pepList: PEP_LIST,
     retrievedAt: new Date().toISOString(),
     note: "Record these list versions with any screening result. Screening against an out-of-date list does not demonstrate compliance.",
   });
