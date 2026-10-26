@@ -2327,6 +2327,45 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_tool_invocations_agent ON tool_invocations (agent_id, created_at DESC);
     `);
 
+    // Policy decision point shadow comparison (server/pdp-shadow.ts). Counts hold
+    // EVERY comparison, so "no disagreements" always comes with how many calls were
+    // compared; diffs hold detail for the ones that were not identical, capped per
+    // key per hour, with a hash of the arguments and never the arguments. Dropped
+    // once the PDP is authoritative (S0.2 C5).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS pdp_shadow_counts (
+        hour TIMESTAMP NOT NULL,
+        actor_kind TEXT NOT NULL,
+        organization_id VARCHAR,
+        agent_id VARCHAR NOT NULL,
+        tool_name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        n INTEGER NOT NULL DEFAULT 0,
+        decide_us_sum BIGINT NOT NULL DEFAULT 0,
+        decide_us_max INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (hour, actor_kind, agent_id, tool_name, category)
+      );
+      CREATE TABLE IF NOT EXISTS pdp_shadow_diffs (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        created_at TIMESTAMP DEFAULT NOW(),
+        actor_kind TEXT NOT NULL,
+        organization_id VARCHAR,
+        agent_id VARCHAR NOT NULL,
+        tool_name TEXT NOT NULL,
+        server_id VARCHAR,
+        category TEXT NOT NULL,
+        legacy_class TEXT NOT NULL,
+        legacy_reason TEXT,
+        unified_class TEXT NOT NULL,
+        unified_gate TEXT,
+        unified_reason TEXT,
+        rules_triggered JSONB,
+        args_hash TEXT,
+        trace_id VARCHAR
+      );
+      CREATE INDEX IF NOT EXISTS idx_pdp_shadow_diffs_cat ON pdp_shadow_diffs (category, created_at DESC);
+    `);
+
     // Design section 6f: a retrieval representation must say what content, and
     // which version, it represents. Without these, "stale vector", "never
     // embedded" and "vector belongs to older text" render identically -- which

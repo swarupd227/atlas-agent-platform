@@ -30,6 +30,7 @@ import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpA
 import { credentialsForStatusUrl, policyFetch } from "./url-safety";
 import { LockdownError, connectorAllowed, connectorKindOf, nativeToolAllowed } from "./lockdown";
 import { blockedConnectorKind } from "./connector-lockdown";
+import { shadowCompareDispatch } from "./pdp-shadow";
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
 import { coerceToolArgsToSchema } from "./tool-arg-coercion";
@@ -1100,6 +1101,9 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
           iteration: req.iteration ?? null,
         })?.catch?.(() => {});
     } catch { /* provenance must never fail a tool call */ }
+    // S0.2 shadow comparison (server/pdp-shadow.ts): a no-op unless PDP_MODE=shadow,
+    // never awaited, never throws, and cannot change this result.
+    shadowCompareDispatch(req, partial);
     return {
       ...partial,
       redactedArgs,

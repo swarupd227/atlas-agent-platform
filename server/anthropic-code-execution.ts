@@ -8,6 +8,7 @@
 
 import { evaluateActionPolicy } from "./tool-dispatcher";
 import type { AvailableTool } from "./tool-dispatcher";
+import { shadowCompareCodeExecution } from "./pdp-shadow";
 import { getAnthropicRawClient } from "./llm-provider";
 import { storage } from "./storage";
 import { nativeToolAllowed } from "./lockdown";
@@ -135,6 +136,7 @@ export async function resolveCodeExecutionAccess(
     toolInputSchema: {},
   };
   const { decision, approvalId } = await evaluateActionPolicy(agentId, fakeTool);
+  shadowCompareCodeExecution(agentId, fakeTool, decision);
 
   if (decision === "BLOCK") return { enabled: false };
   if (decision === "REQUIRE_APPROVAL") return { enabled: false, pendingApprovalId: approvalId };

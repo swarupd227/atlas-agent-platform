@@ -3,6 +3,7 @@ import * as crypto from "crypto";
 import { storage } from "../storage";
 import { gradedSuiteRuns } from "../eval-run-scope";
 import { validateDecisionSetting } from "../decision-settings";
+import { validatePdpSetting } from "../pdp-mode";
 import { decideMany, knownIncumbent } from "../decision-provider";
 import { parseOpenApiSpec, OpenApiParseError, type ParsedOpenApiSpec } from "../openapi-import";
 import { assertSafeOutboundUrl, safeFetch, vetMcpUrl } from "../url-safety";
@@ -6260,7 +6261,8 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
         }
       }
 
-      const yamlExtras: AgentYamlExtras = {
+      // Both lists are always assigned below, so say so: the uses further down spread and measure them.
+      const yamlExtras: AgentYamlExtras & { stopConditions: string[]; forbiddenOutputs: string[] } = {
         industry: (await resolveAgentIndustry(agent as any)),
         autonomyMode: agent.autonomyMode,
         riskTier: agent.riskTier,
@@ -15532,7 +15534,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
   // Same permission as deciding one (approve/reject below): removing a request record is part
   // of managing them, not read-only.
   router.delete("/api/marketplace/install-requests/:id", checkPermission("manage_security"), async (req, res) => {
-    const deleted = await storage.deleteMarketplaceInstallRequest(req.params.id);
+    const deleted = await storage.deleteMarketplaceInstallRequest(req.params.id as string);
     if (!deleted) return res.status(404).json({ message: "Not found" });
     res.status(204).send();
   });
@@ -15652,6 +15654,8 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
       });
       const refusal = validateDecisionSetting(data.key, data.value);
       if (refusal) return res.status(400).json({ message: refusal });
+      const pdpRefusal = validatePdpSetting(data.key, data.value);
+      if (pdpRefusal) return res.status(400).json({ message: pdpRefusal });
       const previous = await storage.getPlatformSetting(data.key);
       const upserted = await storage.upsertPlatformSetting(data);
       await storage.createAuditEvent({
@@ -18870,6 +18874,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       }
       const run = await storage.getPipelineRun(req.params.id);
       if (!run) return res.status(404).json({ error: "Pipeline run not found" });
+      const gateRun = run; // narrowed: routeToGate below is a hoisted declaration and would not see the check
       if (run.status !== "paused_at_gate") {
         return res.status(400).json({ error: "Run is not paused at an approval gate" });
       }
@@ -18995,11 +19000,11 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         stageResults[gateIdx].status = "awaiting_approval";
         stageResults[gateIdx].startedAt = stageResults[gateIdx].startedAt || new Date().toISOString();
         let activeInterruptId: string | null = null;
-        const interruptDef = await storage.getInterruptDefinitionByStage(run.pipelineId, gateStage.id as string);
+        const interruptDef = await storage.getInterruptDefinitionByStage(gateRun.pipelineId, gateStage.id as string);
         const sanitizedForGate = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
         if (interruptDef) {
           const fireResult = await fireInterrupt({
-            pipelineRunId: run.id,
+            pipelineRunId: gateRun.id,
             stageId: gateStage.id as string,
             stageName: (gateStage.label as string) || (gateStage.name as string) || "Gate",
             definition: interruptDef,
@@ -19011,7 +19016,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           const gateIntId = crypto.randomUUID();
           const gateHash = crypto.createHash("sha256").update(JSON.stringify(sanitizedForGate)).digest("hex");
           const cp = await storage.createWorkflowCheckpoint({
-            pipelineRunId: run.id, trigger: "interrupt",
+            pipelineRunId: gateRun.id, trigger: "interrupt",
             triggerStageId: gateStage.id as string,
             stateJson: sanitizedForGate, stateHash: gateHash,
             interruptId: gateIntId, interruptNode: gateStage.id as string,

@@ -163,6 +163,18 @@ describe("no execution path bypasses the dispatcher (per-caller closure)", () =>
   // caller meets lockdown, idempotency, spans and the tool_invocations record.
   it.todo("the AAR routes decide through the policy decision point and never call executeTool directly");
 
+  it("every legacy policy decision is offered to the PDP shadow comparison (S0.2 C3)", () => {
+    // finish() is the one point every dispatch outcome passes through.
+    const finishAt = dispatcher.indexOf("const finish = (partial");
+    const returnAt = dispatcher.indexOf("return {\n      ...partial,", finishAt);
+    expect(finishAt).toBeGreaterThan(-1);
+    expect(dispatcher.slice(finishAt, returnAt > -1 ? returnAt : undefined)).toMatch(/shadowCompareDispatch\(req, partial\)/);
+    const aarSrc = read("server/routes/aar.ts");
+    expect(aarSrc.match(/await evaluateActionAgainstConstraints\(/g)?.length).toBe(3);
+    expect(aarSrc.match(/shadowCompareAar\(\{/g)?.length).toBe(3);
+    expect(read("server/anthropic-code-execution.ts")).toMatch(/shadowCompareCodeExecution\(agentId, fakeTool, decision\)/);
+  });
+
   it("the simulated proxyToolCall is gone from every route", () => {
     const offenders = files.filter(f => {
       const rel = f.replace(root, "").replace(/\\/g, "/").slice(1);

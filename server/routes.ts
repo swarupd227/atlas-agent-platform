@@ -177,6 +177,7 @@ import { createMicrosoftGraphRouter } from "./integrations/msgraph/mcp-server";
 import { createSnowflakeRouter } from "./integrations/snowflake/mcp-server";
 import { createDatabricksRouter } from "./integrations/databricks/mcp-server";
 import { createDecisionAuditRouter } from "./routes/decision-audit";
+import { createPdpShadowRouter } from "./routes/pdp-shadow";
 import { createWorkdayRouter } from "./integrations/workday/mcp-server";
 import { createSapRouter } from "./integrations/sap/mcp-server";
 import { createNetSuiteRouter } from "./integrations/netsuite/mcp-server";
@@ -606,6 +607,8 @@ export async function registerRoutes(
   app.use("/api/integrations/databricks", createDatabricksRouter());
   // Jev shadow-measurement report (read-only, admin). See server/decision-shadow.ts.
   app.use("/api/decision-audit", createDecisionAuditRouter());
+  // Policy decision point shadow comparison report (read-only, platform admins). See server/pdp-shadow.ts.
+  app.use("/api/pdp", createPdpShadowRouter());
   app.use("/api/integrations/workday", createWorkdayRouter());
   app.use("/api/integrations/sap", createSapRouter());
   app.use("/api/integrations/netsuite", createNetSuiteRouter());

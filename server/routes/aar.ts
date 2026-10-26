@@ -6,6 +6,7 @@ import { isMcpServerVisibleToOrg } from "../tenant-scope";
 import type { AarConfig, InsertAarConfig } from "../../shared/schema";
 import { buildMcpAuthHeaders } from "../mcp-client";
 import { gatherAvailableTools, executeTool } from "../tool-dispatcher";
+import { shadowCompareAar } from "../pdp-shadow";
 
 // ─── Task 1: Token-bucket rate limiter (in-memory, per agentId:toolName) ─────
 interface TokenBucket {
@@ -702,7 +703,7 @@ export async function evaluateActionAgainstConstraints(
   agentId: string,
   toolName: string,
   serverId: string | undefined,
-  orgId: string,
+  orgId: string | undefined,
   args: Record<string, unknown> = {},
 ): Promise<{
   decision: string;
@@ -800,6 +801,7 @@ router.post("/api/agents/:agentId/aar/evaluate-action", async (req, res) => {
 
     const startUs = Date.now() * 1000;
     const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId, args ?? {});
+    shadowCompareAar({ agentId, orgId, toolName: tool_name, serverId: server_id, args: args ?? {}, legacy: evaluation });
     const evaluationTimeUs = Date.now() * 1000 - startUs;
 
     let approvalId: string | undefined;
@@ -892,6 +894,7 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
 
     const startUs = Date.now() * 1000;
     const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId, args ?? {});
+    shadowCompareAar({ agentId, orgId, toolName: tool_name, serverId: server_id, args: args ?? {}, legacy: evaluation });
     const evaluationTimeUs = Date.now() * 1000 - startUs;
 
     let approvalId: string | undefined;
@@ -1113,6 +1116,7 @@ router.get("/api/agents/:agentId/aar/invoke-tool/stream", async (req, res) => {
     }
 
     const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId, {});
+    shadowCompareAar({ agentId, orgId, toolName: tool_name, serverId: server_id, args: {}, legacy: evaluation });
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
