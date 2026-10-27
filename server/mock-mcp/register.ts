@@ -1,4 +1,5 @@
 import { storage } from "../storage";
+import type { McpToolRisk } from "../tool-risk";
 import { wcServerDefinitions } from "./wc-register";
 import { mbMortgageServerDefinitions } from "./mb-mortgage-register";
 import { mbCreServerDefinitions } from "./mbcre-register";
@@ -17,6 +18,14 @@ interface MockMcpServerDef {
     endpoint: string;
     method: string;
     inputSchema: object;
+    /**
+     * Optional. Omitted, the tool keeps this registrar's blanket "low" -- which
+     * is what every mock tool has always been given, whatever it does. Declare
+     * it to say so: the `tool_permissions` branch of
+     * assessConnectorLinkWarnings and computeApprovalRiskScore read this field
+     * and nothing else.
+     */
+    riskClassification?: McpToolRisk;
   }[];
 }
 
@@ -3116,7 +3125,7 @@ export async function registerMockMcpServers(): Promise<{ servers: any[]; tools:
             description: toolDef.description,
             inputSchema: toolDef.inputSchema,
             enabled: true,
-            riskClassification: "low",
+            riskClassification: toolDef.riskClassification ?? "low",
             annotations: { endpoint: toolDef.endpoint, method: toolDef.method },
           });
         }
@@ -3142,7 +3151,7 @@ export async function registerMockMcpServers(): Promise<{ servers: any[]; tools:
         description: toolDef.description,
         inputSchema: toolDef.inputSchema,
         enabled: true,
-        riskClassification: "low",
+        riskClassification: toolDef.riskClassification ?? "low",
         annotations: {
           endpoint: toolDef.endpoint,
           method: toolDef.method,

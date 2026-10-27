@@ -24,6 +24,7 @@ import { mysqlMcpServer } from "./sql/mysql/mcp-server";
 import { sqlServerMcpServer } from "./sql/sqlserver/mcp-server";
 import { dealerOperationsMcpServer } from "./dealer-operations/mcp-server";
 import type { RealMcpBase } from "../real-mcp-base";
+import { reconcileToolRisk, type McpToolRisk } from "../tool-risk";
 
 // PUBLIC_URL is set in production (see deploy/azure/provision.sh) to this
 // app's real, externally-reachable base URL -- required for anything outside
@@ -176,6 +177,78 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
   ];
 }
 
+/**
+ * Raise stored tool risk to what the connector's own catalog declares.
+ *
+ * Needed because a declaration alone changes nothing live: `createMcpServerTool`
+ * runs once per tool, so every row that already exists keeps the blanket value
+ * the registrar stamped on it when it was created. Measured on Azure
+ * 2026-10-27, both Dealer Operations rows held `post_allocation` at "low" --
+ * below even this registrar's own "medium" default, because they were created by
+ * an earlier version and only their annotations were ever backfilled.
+ *
+ * Covers the per-connection SIBLING rows as well as the template, found by
+ * `integrationId`. A sibling's catalog is a clone of the template's
+ * (`upsertIntegrationMcpServer` in routes/enterprise-integrations.ts copies
+ * `riskClassification` verbatim), so new siblings inherit a corrected value --
+ * but the ones already cloned would otherwise keep the old one forever, and an
+ * agent bound to a sibling is governed by that row, not the template's.
+ *
+ * Only tools the catalog actually declares are considered, and only upward:
+ * `reconcileToolRisk` never lowers a stored value, so an operator's deliberate
+ * classification survives. A failure here is logged and skipped rather than
+ * thrown -- this runs during startup registration, and a connector whose risk
+ * could not be reconciled must still be registered.
+ */
+async function reconcileDeclaredToolRisk(
+  def: EnterpriseServerDef,
+  allServers: Array<{ id: string; name: string; integrationId?: string | null }>,
+): Promise<void> {
+  const declared = new Map<string, McpToolRisk>();
+  for (const toolDef of def.server.tools) {
+    if (toolDef.riskClassification) declared.set(toolDef.name, toolDef.riskClassification);
+  }
+  if (declared.size === 0) return;
+
+  for (const target of allServers.filter((s) => s.integrationId === def.server.integrationId)) {
+    let tools: Awaited<ReturnType<typeof storage.getMcpServerTools>>;
+    try {
+      tools = await storage.getMcpServerTools(target.id);
+    } catch (err: any) {
+      console.warn(`[integrations] risk reconcile skipped for ${target.name}: ${err?.message}`);
+      continue;
+    }
+    for (const tool of tools) {
+      const next = reconcileToolRisk(declared.get(tool.name), tool.riskClassification);
+      if (!next) continue;
+      const from = tool.riskClassification ?? "unset";
+      try {
+        await storage.updateMcpServerTool(tool.id, { riskClassification: next });
+        console.log(`[integrations] ${target.name}: ${tool.name} risk ${from} -> ${next} (declared by ${def.server.integrationId})`);
+        if (typeof storage.createAuditEvent === "function") {
+          await storage.createAuditEvent({
+            action: "tool_catalog.tool_risk_reclassified",
+            objectType: "mcp_server_tool",
+            objectId: tool.id,
+            actorId: "platform",
+            details: JSON.stringify({
+              serverId: target.id,
+              serverName: target.name,
+              toolName: tool.name,
+              from,
+              to: next,
+              declaredBy: def.server.integrationId,
+              reason: "connector catalog declares this tool's risk; stored value was lower",
+            }),
+          });
+        }
+      } catch (err: any) {
+        console.warn(`[integrations] risk reconcile failed for ${target.name}/${tool.name}: ${err?.message}`);
+      }
+    }
+  }
+}
+
 // Makes each hardcoded native connector show up in the same browsable Connector Library as
 // real-MCP and OpenAPI-imported ones (see client/src/pages/marketplace.tsx), as an
 // already-installed, read-only entry -- installing here means nothing, the server already
@@ -248,7 +321,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
             description: toolDef.description,
             inputSchema: toolDef.inputSchema,
             enabled: true,
-            riskClassification: "medium",
+            riskClassification: toolDef.riskClassification ?? "medium",
             annotations,
           });
           toolCount++;
@@ -266,6 +339,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
         }
       }
       toolCount += existingTools.length;
+      await reconcileDeclaredToolRisk(def, allServers);
       await upsertNativeCatalogEntry(def, existing.id);
       continue;
     }
@@ -288,7 +362,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
         description: toolDef.description,
         inputSchema: toolDef.inputSchema,
         enabled: true,
-        riskClassification: "medium",
+        riskClassification: toolDef.riskClassification ?? "medium",
         annotations: {
           endpoint: `/tools/${toolDef.name}`,
           method: "POST",

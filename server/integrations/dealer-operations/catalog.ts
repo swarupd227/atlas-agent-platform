@@ -23,6 +23,24 @@ const arr = (description: string): Field => ({ type: "array", description });
 
 const AGENT_ID = str("Calling agent's external id, recorded on the audit trail");
 
+/**
+ * RISK CLASSIFICATION. Declared per tool, because two controls read this field
+ * and nothing else -- the `tool_permissions` branch of
+ * assessConnectorLinkWarnings (server/connector-link.ts) and
+ * computeApprovalRiskScore. Until it was declared here, all 57 tools synced at
+ * the registrar's blanket default, so `post_allocation` was indistinguishable
+ * from a lookup and that branch could never fire for this connector.
+ *
+ *   high    moves money or is visible outside the dealership
+ *   medium  writes internal workflow state; no money, nothing leaves
+ *   low     reads (the default; left undeclared)
+ *
+ * The 11 declarations below are exactly the 11 handlers in tools-*.ts that run
+ * an INSERT, UPDATE or DELETE. That correspondence is a ratchet, not a comment:
+ * tests/tool-risk.test.ts re-derives the write set from the handler sources and
+ * fails if a handler starts writing without being classified here, or if a
+ * declaration names a tool that does not write.
+ */
 export const TOOL_CATALOG: RealMcpToolDef[] = [
   // ── Receivables: intake and understanding ─────────────────────────────────
   {
@@ -96,6 +114,8 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   },
   {
     name: "post_allocation",
+    // Writes journal entries to the branch ledgers.
+    riskClassification: "high",
     description:
       "Post an approved allocation to the branch ledgers, splitting each line to its originating branch and attaching the source document to every journal entry. Enforces segregation of duties (the actor that proposed an allocation may not post it), the auto-post confidence floor, the source-document requirement, and the residual write-off ceiling — refusing, with the reason, when any gate is not satisfied.",
     inputSchema: schema({
@@ -110,6 +130,8 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   },
   {
     name: "route_to_research_queue",
+    // Writes a research queue row and moves the payment out of unapplied.
+    riskClassification: "medium",
     description:
       "Route a payment that cannot be confidently allocated to human research, carrying the parsed remittance, ranked candidate allocations with the reason each fell short, and a plain statement of what could not be determined — so the researcher's first action is a decision rather than a lookup.",
     inputSchema: schema({
@@ -184,6 +206,8 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   },
   {
     name: "prepare_credit_memo",
+    // Writes a credit memo, which reduces what the customer owes -- the name says prepare, the handler inserts one.
+    riskClassification: "high",
     description:
       "Assemble a credit memo with its supporting evidence and route it to the approval level its value requires under the delegation-of-authority matrix. Memos above the agent ceiling must carry both a contract clause and a shown calculation, and are never self-approved regardless of how clear the case is.",
     inputSchema: schema({
@@ -205,6 +229,8 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   },
   {
     name: "apply_credit_hold",
+    // Stops the account transacting.
+    riskClassification: "high",
     description:
       "Apply an approved credit hold account-wide across every branch. Requires documented ageing justification, and requires a named human approver for strategic or manufacturer-affiliated accounts regardless of exposure. Refuses when the balance is predominantly disputed.",
     inputSchema: schema({
@@ -266,24 +292,32 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   },
   {
     name: "assemble_claim",
+    // Creates the claim record.
+    riskClassification: "medium",
     description:
       "Build a draft warranty claim from a completed work order, capping claimable labour at the published standard and listing any mandatory element that is missing. Where the technician's notes do not establish a failure cause, that is reported as missing rather than inferred.",
     inputSchema: schema({ work_order_id: str("Work order identifier") }, ["work_order_id"]),
   },
   {
     name: "run_compliance_gate",
+    // Records the gate verdict that submit_claim refuses to proceed without.
+    riskClassification: "medium",
     description:
       "Run every mandatory pre-submission check against source data rather than trusting the caller: equipment identity resolved, coverage on both calendar and meter-hour dimensions including repeat-failure extensions, labour within the published standard, and causal part and narrative present. Records the verdict so submission can be gated on it.",
     inputSchema: schema({ claim_id: str("Claim identifier as returned by assemble_claim (e.g. WC-...). Not a work order id.") }, ["claim_id"]),
   },
   {
     name: "submit_claim",
+    // Submits to the manufacturer portal; a bad claim costs OEM program standing.
+    riskClassification: "high",
     description:
       "Submit a warranty claim to the manufacturer portal. Refuses any claim that has not recorded a passing compliance gate — protecting the dealership's program standing, which outweighs the value of any individual claim. Run run_compliance_gate on the claim first; without a recorded PASS this always refuses.",
     inputSchema: schema({ claim_id: str("Claim identifier as returned by assemble_claim (e.g. WC-...). Not a work order id.") }, ["claim_id"]),
   },
   {
     name: "route_to_goodwill_review",
+    // Moves the claim into goodwill review.
+    riskClassification: "medium",
     description:
       "Route a repair that failed the compliance gate to internal goodwill or customer-pay review instead of submitting it, carrying the specific failing condition and the commercial context of the customer involved.",
     inputSchema: schema({
@@ -293,6 +327,8 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   },
   {
     name: "get_claim_status",
+    // Reads like a read and writes: the OEM adjudication simulator standing in for the portal persists the verdict it computes.
+    riskClassification: "medium",
     description:
       "Return adjudication outcomes for submitted claims: approved amounts, denials with manufacturer reason codes, and partial approvals with labour written down to standard.",
     inputSchema: schema({ claim_id: str("Claim identifier; omit for all submitted claims") }),
@@ -305,6 +341,8 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   },
   {
     name: "post_warranty_receivable",
+    // Recognises a receivable against the manufacturer.
+    riskClassification: "high",
     description:
       "Post an approved warranty claim as a receivable to the branch that performed the work, in the period the repair obligation was satisfied rather than the period the manufacturer happened to pay.",
     inputSchema: schema({ claim_id: str("Claim identifier"), agent_id: AGENT_ID }, ["claim_id"]),
@@ -392,6 +430,8 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   },
   {
     name: "release_invoice",
+    // Issues an invoice to the customer.
+    riskClassification: "high",
     description:
       "Release a reconciled rental cycle invoice for billing. Refuses release while a purchase-option contract is unclassified, or while a telematics reporting gap in the billing period is unreviewed by a human.",
     inputSchema: schema({

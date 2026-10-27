@@ -2,6 +2,7 @@ import { isReferenceBlob, openCredentialMap } from "./credential-store";
 import { storage } from "./storage";
 import { UnsafeUrlError, outboundPolicyMode, policyFetch } from "./url-safety";
 import { checkConnectorTargets } from "./connector-targets";
+import type { McpToolRisk } from "./tool-risk";
 
 export interface McpToolResult {
   content: Array<{ type: "text"; text: string }>;
@@ -12,6 +13,16 @@ export interface RealMcpToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * What granting this one tool lets an agent cause. Omit it and the tool keeps
+   * the registrar's blanket default; declare it and the registrar raises the
+   * stored value to match (never lowers it -- see server/tool-risk.ts).
+   *
+   * This is how a connector says which of its tools write. Two controls read
+   * the field and nothing else: the `tool_permissions` branch of
+   * assessConnectorLinkWarnings, and computeApprovalRiskScore.
+   */
+  riskClassification?: McpToolRisk;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
