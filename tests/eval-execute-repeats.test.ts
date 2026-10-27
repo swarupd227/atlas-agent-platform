@@ -319,6 +319,43 @@ describe("a repeated run is queued, not answered in the request", () => {
   });
 });
 
+describe("a single run longer than a request can wait is queued too", () => {
+  // Each case is a live agent call; Azure cuts a request silent for ~230s, so a
+  // 14-case run lost its run id while it finished on the server.
+  it("answers a run of up to INLINE_CASE_LIMIT cases in the request", async () => {
+    state.cases = Array.from({ length: (mod as any).INLINE_CASE_LIMIT }, () => severityCase());
+    const r = await post("/api/evals/s1/execute");
+    expect(r.status).toBe(200);
+    expect(state.jobs).toHaveLength(0);
+    expect(r.body.totalCases).toBe((mod as any).INLINE_CASE_LIMIT);
+  });
+
+  it("queues a longer single run with where to read it, and the job finishes it", async () => {
+    state.cases = Array.from({ length: (mod as any).INLINE_CASE_LIMIT + 1 }, () => severityCase());
+    const r = await post("/api/evals/s1/execute");
+    expect(r.status).toBe(202);
+    expect(r.body).toMatchObject({ runId: "run1", jobId: "job1", status: "running", repeats: 1, totalCases: 5 });
+    expect(state.answerCalls).toBe(0);
+    expect(state.jobs[0]).toMatchObject({ type: "eval_repeat_run", payload: { mode: "execute", runId: "run1", repeats: 1 } });
+    const body = await (mod as any).runEvalRepeatJob(state.jobs[0].payload);
+    expect(body.totalCases).toBe(5);
+    expect(state.caseResults).toHaveLength(5);
+  });
+
+  it("keeps a long single run in the request when the caller sends wait: true", async () => {
+    state.cases = Array.from({ length: 6 }, () => severityCase());
+    const r = await post("/api/evals/s1/execute", { wait: true });
+    expect(r.status).toBe(200);
+    expect(state.jobs).toHaveLength(0);
+    expect(r.body.totalCases).toBe(6);
+  });
+
+  it("decides the same way for every combination", () => {
+    const f = (mod as any).runsInBackground;
+    expect([f(1, 4), f(1, 5), f(1, 25, true), f(2, 1), f(2, 1, true)]).toEqual([false, true, false, true, true]);
+  });
+});
+
 describe("a repeated case's row says what it describes", () => {
   it("names the attempt its criteria come from, and that the score is a mean", async () => {
     state.answers = [sev("High"), sev("Medium"), sev("High")];

@@ -155,6 +155,14 @@ export function compileProcessFlow(graph: ProcessFlowGraph, opts: CompileOptions
     }
   }
 
+  // forEach makes a tool step call its tool once per item; on any other step it does nothing.
+  for (const n of graph.nodes) {
+    const config = (n.config ?? {}) as { forEach?: unknown; toolName?: unknown; toolServerId?: unknown };
+    if (String(config.forEach ?? "").trim() && !(String(config.toolName ?? "").trim() && String(config.toolServerId ?? "").trim())) {
+      warn("for_each_without_tool", `"${n.label}" has a forEach list but is not a tool step, so the list is ignored. Only a step that calls a connector tool can run once per item.`, { nodeId: n.id });
+    }
+  }
+
   // Incoming-edge count per node (from valid edges), used for reachability and
   // orphan detection below.
   const incoming = new Map<string, number>(graph.nodes.map(n => [n.id, 0]));

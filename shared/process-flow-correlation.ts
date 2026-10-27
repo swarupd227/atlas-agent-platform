@@ -78,7 +78,8 @@ export interface StepCorrelation {
 
 const DECISION_KEYS = ["answerType", "question", "options", "levels", "confidenceThreshold", "unsure", "classifierId"] as const;
 
-const TOOL_KEYS = ["toolName", "toolServerId", "toolArgs"] as const;
+// forEach is part of the binding: a step that changed only its list must re-sync.
+const TOOL_KEYS = ["toolName", "toolServerId", "toolArgs", "forEach"] as const;
 
 function toolFingerprint(config: Record<string, any>): string | null {
   const picked: Record<string, unknown> = {};

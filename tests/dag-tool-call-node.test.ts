@@ -218,3 +218,85 @@ describe("a tool_call node", () => {
     expect(result.waveResults[0].nodes[0].status).toBe("skipped");
   });
 });
+
+/**
+ * forEach: one tool step, called once per item of a list in state. Before it, a
+ * flow drew one step per party it expected, so a case with one more party than
+ * the drawing went unscreened without anything failing.
+ */
+describe("a tool_call node with forEach", () => {
+  const parties = { case: { parties: [
+    { partyId: "PTY-1", name: "Elena", role: "co_trustee" },
+    { partyId: "PTY-2", name: "Hasan", role: "co_trustee" },
+    { partyId: "PTY-3", name: "Mateo", role: "beneficiary" },
+  ] } };
+  const each = (forEach: string, toolArgs: Record<string, unknown> = { partyId: { $expr: "$item.partyId" }, n: { $expr: "$index" } }) =>
+    toolCallNode({ toolServerId: "srv-1", toolName: "snow_add_work_note", forEach, toolArgs });
+
+  it("calls the tool once per item, in order, with $item and $index bound", async () => {
+    dispatchToolCall.mockImplementation(async ({ args }: any) => ({ outcome: "success", result: { verified: args.partyId } }));
+    const result = await run(each("case.parties[role != 'beneficiary']"), parties);
+
+    expect(result.success).toBe(true);
+    expect(dispatchToolCall.mock.calls.map((c) => c[0].args)).toEqual([{ partyId: "PTY-1", n: 0 }, { partyId: "PTY-2", n: 1 }]);
+    expect(result.finalState.posted).toEqual([{ verified: "PTY-1" }, { verified: "PTY-2" }]);
+    expect(result.waveResults[0].nodes[0].toolCallCount).toBe(2);
+  });
+
+  it("can still read the rest of state in an argument, next to the item", async () => {
+    await run(each("case.parties", { partyId: { $expr: "$item.partyId" }, caseId: { $expr: "caseRef" } }), { ...parties, caseRef: "ACCT-ONB-1" });
+    expect(dispatchToolCall.mock.calls.map((c) => c[0].args.caseId)).toEqual(["ACCT-ONB-1", "ACCT-ONB-1", "ACCT-ONB-1"]);
+  });
+
+  it("treats a one-item result as a list of one", async () => {
+    await run(each("case.parties[role = 'beneficiary']"), parties);
+    expect(dispatchToolCall).toHaveBeenCalledTimes(1);
+    expect(dispatchToolCall.mock.calls[0][0].args.partyId).toBe("PTY-3");
+  });
+
+  it("gives every call its own idempotency scope, so matching arguments are still separate calls", async () => {
+    await run(each("case.parties", { table: "x" }), parties);
+    const scopes = dispatchToolCall.mock.calls.map((c) => c[0].idempotencyScope);
+    expect(new Set(scopes).size).toBe(3);
+    expect(scopes[0]).toBe("run-1:call-1:0");
+  });
+
+  it("fails, calling nothing, when the list resolves to nothing -- a missing field is not 'nobody to screen'", async () => {
+    const result = await run(each("case.signatories"), parties);
+    expect(result.success).toBe(false);
+    expect(dispatchToolCall).not.toHaveBeenCalled();
+    expect(result.waveResults[0].nodes[0].error).toContain("resolved to nothing");
+  });
+
+  it("completes with no calls for an explicitly empty list", async () => {
+    const result = await run(each("[case.parties[role = 'grantor']]"), parties);
+    expect(result.success).toBe(true);
+    expect(dispatchToolCall).not.toHaveBeenCalled();
+    expect(result.finalState.posted).toEqual([]);
+  });
+
+  it("stops at the first refused call and says how many were already made", async () => {
+    dispatchToolCall
+      .mockResolvedValueOnce({ outcome: "success", result: { ok: 1 } })
+      .mockResolvedValueOnce({ outcome: "blocked_by_policy", reason: "blocked" });
+    const result = await run(each("case.parties"), parties);
+    expect(result.success).toBe(false);
+    expect(dispatchToolCall).toHaveBeenCalledTimes(2);
+    expect(result.finalState.posted).toBeUndefined();
+    expect(result.waveResults[0].nodes[0].error).toContain("item 2 of 3 (1 already made)");
+  });
+
+  it("refuses a list longer than the limit before calling anything", async () => {
+    const { FOR_EACH_LIMIT } = await import("../server/dag-execution-engine");
+    const result = await run(each("items"), { items: Array.from({ length: FOR_EACH_LIMIT + 1 }, (_, i) => ({ partyId: `P${i}` })) });
+    expect(result.success).toBe(false);
+    expect(dispatchToolCall).not.toHaveBeenCalled();
+  });
+
+  it("fails cleanly on a list expression that does not parse", async () => {
+    const result = await run(each("(("), parties);
+    expect(result.success).toBe(false);
+    expect(dispatchToolCall).not.toHaveBeenCalled();
+    expect(result.waveResults[0].nodes[0].error).toContain("Could not read the list");
+  });
+});

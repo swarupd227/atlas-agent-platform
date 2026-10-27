@@ -626,6 +626,20 @@ export async function recordSuiteRate(suiteId: string, repeats: number, passRate
 }
 
 /**
+ * Cases a single (unrepeated) run still answers inside the request. Each case
+ * is a live agent call -- about 17s on a plain answer and over a minute with
+ * tool calls -- and Azure cuts a request that is silent for about 230 seconds,
+ * so a 14-case run lost its run id to the gateway while it finished on the
+ * server. Above this the run goes to the background job, like a repeated run.
+ */
+export const INLINE_CASE_LIMIT = 4;
+
+/** Whether a run is queued (202, read the run) rather than answered in the request. `wait: true` keeps a long single run inline for callers that can hold the connection. */
+export function runsInBackground(repeats: number, caseCount: number, wait?: unknown): boolean {
+  return repeats > 1 || (wait !== true && caseCount > INLINE_CASE_LIMIT);
+}
+
+/**
  * What a repeated run's row says about itself from the moment it exists: resultsJson.repeats, the
  * marker that readers use to tell it from an ordinary run. Without it, a repeated run that is
  * still running, or that fails before it completes, would carry no marker and read as an
@@ -1131,10 +1145,10 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
       ...repeatedRunMarker(repeats),
     });
 
-    // A repeated run takes many times longer than a request can wait (Azure cuts one
-    // that is silent for about 230 seconds), so it runs as a background job and the
-    // caller reads the run. One attempt per case is still answered in the request.
-    if (repeats > 1) {
+    // A repeated run, or a single run of more cases than a request can wait for
+    // (Azure cuts one that is silent for about 230 seconds), runs as a background
+    // job and the caller reads the run. A short single run is answered in the request.
+    if (runsInBackground(repeats, cases.length, req.body?.wait)) {
       const queued = await queueRepeatRun({ mode: "golden", suiteId: suite.id, runId: run.id, agentId: agent.id, caseIds: cases.map(c => c.id), repeats, orgId }, cases.length);
       return res.status(202).json(queued);
     }
@@ -1168,6 +1182,11 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
  * prose to the examiner, asserted fields to a deterministic comparison. The
  * first version of this route stringified every object into criterion text,
  * which scored all 107 zero no matter how the agent answered.
+ *
+ * A run of more than INLINE_CASE_LIMIT cases (or any repeated run) answers 202
+ * with { runId, jobId, status: "running" } and finishes in the background job;
+ * read it at /api/eval-runs/:runId. Send wait: true to keep a long single run
+ * in the request.
  */
 router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"), async (req, res) => {
   try {
@@ -1209,8 +1228,8 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
       ...repeatedRunMarker(repeats),
     });
 
-    // See run-golden: a repeated run is queued, not answered in the request.
-    if (repeats > 1) {
+    // See run-golden: a repeated or long run is queued, not answered in the request.
+    if (runsInBackground(repeats, cases.length, req.body?.wait)) {
       const queued = await queueRepeatRun({ mode: "execute", suiteId: suite.id, runId: run.id, agentId: agent.id, caseIds: cases.map(c => c.id), repeats, orgId }, cases.length);
       return res.status(202).json(queued);
     }

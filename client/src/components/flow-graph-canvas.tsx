@@ -1206,13 +1206,31 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                       toolName={d.config?.toolName as string | undefined}
                       onPick={(serverId, serverName, toolName) => patchNode(selNode.id, { config: { ...(d.config || {}), toolServerId: serverId, toolServerName: serverName, toolName } })}
                       onRemove={() => {
-                        const { toolServerId: _s, toolServerName: _n, toolName: _t, toolArgs: _a, ...rest } = (d.config || {}) as Record<string, unknown>;
+                        const { toolServerId: _s, toolServerName: _n, toolName: _t, toolArgs: _a, forEach: _f, ...rest } = (d.config || {}) as Record<string, unknown>;
                         patchNode(selNode.id, { config: rest });
                       }}
                     />
                     <span className="text-[10px] text-muted-foreground">
                       Name the tool and this step makes that one call itself, with no model involved -- it still goes through the agent's policies, approvals and audit. Leave it empty and an agent decides the call, which costs a model call every run.
                     </span>
+                    {!!d.config?.toolName && (
+                      <>
+                        <label className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mt-1">Once per item in (optional, JSONata list)</label>
+                        <Input
+                          value={String((d.config?.forEach as string) || "")}
+                          onChange={e => {
+                            const { forEach: _f, ...rest } = (d.config || {}) as Record<string, unknown>;
+                            patchNode(selNode.id, { config: e.target.value.trim() ? { ...rest, forEach: e.target.value } : rest });
+                          }}
+                          placeholder="read_case.parties[role != 'beneficiary']"
+                          className="h-7 text-xs font-mono"
+                          data-testid="input-node-for-each"
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          Calls the tool once for each item, in order, with the item as $item (and its position as $index) in the arguments. Results land as a list in the same order.
+                        </span>
+                      </>
+                    )}
                   </div>
                 )}
                 {d.ntype === "expression" && (

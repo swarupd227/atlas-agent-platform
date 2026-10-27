@@ -94,3 +94,20 @@ describe("the loop the compiler reports", () => {
     expect(compiled.totalWaves).toBe(3);
   });
 });
+
+describe("a forEach list", () => {
+  const trig = { id: "t", type: "trigger", label: "Start", description: "", actor: "System" };
+  const g = (config: Record<string, unknown>): ProcessFlowGraph => ({
+    version: 2, name: "Onboarding",
+    nodes: [trig, { ...node("n1", "Screen Each Party", "get_info"), config }] as any,
+    edges: [{ id: "e1", from: "t", to: "n1" }],
+  } as ProcessFlowGraph);
+
+  it("is accepted on a tool step", () => {
+    expect(codes(g({ toolServerId: "srv", toolName: "screen_party", forEach: "case.parties" }))).not.toContain("for_each_without_tool");
+  });
+
+  it("is reported on a step that calls no tool, since it would be ignored", () => {
+    expect(issue(g({ forEach: "case.parties" }), "for_each_without_tool")?.message).toContain("Screen Each Party");
+  });
+});

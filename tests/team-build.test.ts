@@ -284,6 +284,53 @@ describe("buildTeamFromProposal", () => {
     expect(gate).toMatchObject({ nodeType: "edge_gate", gateType: "approval", refAgentId: null });
   });
 
+  it("creates an agent row only for a step that runs an agent", async () => {
+    // A gate and a deterministic step run no agent. Building a row for every
+    // step left 21 of 25 agent rows unused on a 32-step flow, each with a
+    // mandate, a team membership and a baseline eval suite.
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("Rebalancing Team"),
+      workers: [
+        worker("Compute Drift", { execution: { kind: "expression", expression: '{ "breached": true }' } }),
+        worker("Build Proposal"),
+        worker("Portfolio Manager Approves", { isHumanCheckpoint: true }),
+      ],
+      pipeline: { pattern: "sequential" },
+    });
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+
+    expect(state.agents.map((a) => a.name)).toEqual(["Rebalancing Team", "Build Proposal"]);
+    expect(result.workers.map((w: any) => w.name)).toEqual(["Build Proposal"]);
+    expect(result.membershipCount).toBe(1);
+    expect(result.stepsWithoutAgent).toBe(2);
+    expect(state.members.map((m) => m.memberAgentId)).toEqual([result.workers[0].id]);
+    expect(Object.keys(result.evalSuiteIds).sort()).toEqual([result.teamAgent.id, result.workers[0].id].sort());
+    const byLabel = (l: string) => state.nodes.find((n) => n.label === l);
+    expect(byLabel("Compute Drift")).toMatchObject({ nodeType: "expression", refAgentId: null });
+    expect(byLabel("Portfolio Manager Approves")).toMatchObject({ nodeType: "edge_gate", refAgentId: null });
+    expect(byLabel("Build Proposal")).toMatchObject({ nodeType: "internal_agent", refAgentId: result.workers[0].id });
+    // Every step is still a node, in order.
+    expect(edgePairs()).toEqual(["Rebalancing Team -> Compute Drift", "Compute Drift -> Build Proposal", "Build Proposal -> Portfolio Manager Approves"]);
+    // No placeholder id ever reaches storage.
+    expect(state.nodes.some((n) => String(n.refAgentId ?? "").startsWith("step:"))).toBe(false);
+    expect(state.agentUpdates.some((u) => String(u.agentId).startsWith("step:"))).toBe(false);
+  });
+
+  it("keeps a tool step's forEach list, and falls back to an agent when it does not parse", async () => {
+    const SRV = "11111111-1111-4111-8111-111111111111";
+    const step = (name: string, forEach: string) => worker(name, { execution: { kind: "tool_call", toolServerId: SRV, toolName: "screen_party", toolArgs: { fullName: { $expr: "$item.name" } }, forEach } });
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("Onboarding Team"),
+      workers: [step("Screen Each Party", "case.parties[role != 'beneficiary']"), step("Screen Badly", "((")],
+      pipeline: { pattern: "sequential" },
+    });
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    const byLabel = (l: string) => state.nodes.find((n) => n.label === l);
+    expect(byLabel("Screen Each Party")).toMatchObject({ nodeType: "tool_call", config: { forEach: "case.parties[role != 'beneficiary']", toolName: "screen_party" } });
+    expect(byLabel("Screen Badly").nodeType).toBe("internal_agent");
+    expect(result.structureWarnings.some((w: string) => w.includes("forEach list does not parse"))).toBe(true);
+  });
+
   it("uses the proposal's own edges when it gives them, including a branch that skips a step", async () => {
     const body = teamBuildBodySchema.parse({
       orchestrator: worker("Claims Team"),

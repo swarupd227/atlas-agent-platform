@@ -252,7 +252,7 @@ function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any
     case "knowledge_base":
       return { kind: "knowledge_base", knowledgeBaseId: config.kbId, knowledgeBaseQuery: config.kbQuery || step.description || step.label, stateKey };
     case "tool_call":
-      return { kind: "tool_call", toolServerId: config.toolServerId, toolName: config.toolName, toolArgs: config.toolArgs, stateKey };
+      return { kind: "tool_call", toolServerId: config.toolServerId, toolName: config.toolName, toolArgs: config.toolArgs, forEach: config.forEach, stateKey };
     case "skill":
       return { kind: "skill", skillId: config.skillId, stateKey };
     case "structural":
@@ -527,7 +527,18 @@ function deterministicNodeFor(
           return null;
         }
       }
-      return { nodeType: "tool_call", stateKey, config: { toolServerId: serverId, toolName: text(exec.toolName), toolArgs } };
+      // forEach: the list the step calls its tool once per item of (see
+      // executeToolCallNode). Checked the same way as an argument.
+      const forEach = text(exec.forEach);
+      if (forEach) {
+        const broken = compiles(forEach);
+        if (broken) {
+          warn?.(`"${proposal?.name ?? "A step"}" was going to call ${text(exec.toolName)} once per item without a model, but its forEach list does not parse (${broken}), so it runs as an agent instead.`);
+          console.warn(`[team-build] forEach for "${proposal?.name}" does not compile, falling back to an agent: ${broken}`);
+          return null;
+        }
+      }
+      return { nodeType: "tool_call", stateKey, config: { toolServerId: serverId, toolName: text(exec.toolName), toolArgs, ...(forEach ? { forEach } : {}) } };
     }
     default:
       return null;
@@ -604,6 +615,8 @@ export const teamAgentProposalSchema = z.object({
     toolServerId: z.string().optional(),
     toolName: z.string().optional(),
     toolArgs: z.record(z.any()).optional(),
+    /** tool_call: a JSONata list; the tool is called once per item, with $item and $index bound in toolArgs. */
+    forEach: z.string().optional(),
   }).optional(),
 });
 
@@ -1263,9 +1276,28 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   const classifiers = new Map<string, ClassifierBinding>();
   try { for (const c of await storage.getDecisionClassifiers(orgId)) classifiers.set(c.id, c as ClassifierBinding); } catch { /* an older storage: steps keep the copy they carry */ }
 
+  // What each worker becomes is decided before anything is created. A gate, or
+  // a deterministic step (tool call, expression, knowledge base, skill), runs
+  // no agent, so it gets no agent row, mandate, team membership or baseline
+  // eval suite. Building one per step left 21 of 25 agent rows unused on a
+  // 32-step flow (28 of 33 on a 42-step one), each with a suite of generated
+  // cases nobody would run. Such a step keeps a placeholder in createdWorkers
+  // (id "step:<index>", runsNoAgent) so the index- and name-keyed wiring below
+  // is unchanged.
+  const planWarnings: string[] = [];
+  const stepPlans = workers.map((worker) => {
+    if (worker.isHumanCheckpoint) return { kind: "gate" as const, det: null };
+    const det = deterministicNodeFor(worker, authoredStepsByLabel, (m) => planWarnings.push(m), allMcpServers, branchConditionsFor(worker, pipeline), branchesFor(worker, pipeline), decisionKind, classifiers);
+    return det ? { kind: "deterministic" as const, det } : { kind: "agent" as const, det: null };
+  });
+
   const createdWorkers: any[] = [];
   const workerLinkResults: Array<{ linked: string[]; unresolved: string[]; unconnected: string[]; policyMismatches: string[] }> = [];
-  for (const worker of workers) {
+  for (const [workerIndex, worker] of workers.entries()) {
+    if (stepPlans[workerIndex].kind !== "agent") {
+      createdWorkers.push({ id: `step:${workerIndex}`, name: worker.name, runsNoAgent: true });
+      continue;
+    }
     const workerAgent = await storage.createAgent({
       organizationId: orgId,
       industryId: planIndustryId,
@@ -1324,6 +1356,8 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   const humanCheckpointWorkerIds = new Set<string>(
     createdWorkers.filter((_, i) => workers[i]?.isHumanCheckpoint).map(w => w.id),
   );
+  /** The workers that are real agents: everything below that writes to an agent row uses these. */
+  const agentWorkers = createdWorkers.filter((w) => !w.runsNoAgent);
 
   for (const kbId of resolveKnowledgeBases(orchestrator.suggestedKnowledgeBases)) {
     try {
@@ -1337,7 +1371,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       // Scope lookup matches on the outcome id alone; keep only this organization's policies.
       const outcomePolicies = (await storage.getPoliciesByScope("outcome", outcomeId)).filter(p => p.organizationId === orgId);
       if (outcomePolicies.length > 0) {
-        const allCreated = [teamAgent, ...createdWorkers];
+        const allCreated = [teamAgent, ...agentWorkers];
         for (const created of allCreated) {
           // Append in the SAME array-of-{policyId} shape the agent was
           // created with. This previously rewrote policyBindings into the
@@ -1451,6 +1485,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // Found before the agents were created (the repair has to precede both
   // toolsConfig and the prompts); reported on the same channel as everything else.
   structureWarnings.push(...toolNameFindings);
+  structureWarnings.push(...planWarnings);
   // Set where the orchestrator is wired to every worker and to nothing else.
   let builtAsFanOut = false;
 
@@ -1494,11 +1529,16 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
             }
           }
         }
-        if (!worker) worker = createdWorkers[j + tierNodes.flat().length];
+        if (!worker) {
+          // Positional fallback. Its index is the worker's own, so the step
+          // plan read below belongs to the same worker as the node.
+          workerIdx = j + tierNodes.flat().length;
+          worker = createdWorkers[workerIdx];
+        }
         if (!worker) continue;
 
         const isGate = humanCheckpointWorkerIds.has(worker.id);
-        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline), branchesFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline), decisionKind, classifiers);
+        const det = isGate ? null : stepPlans[workerIdx >= 0 ? workerIdx : j]?.det ?? null;
         const correlation = correlationFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel);
         const node = await storage.createTeamBlueprintNode({
           blueprintId: blueprint.id,
@@ -1508,7 +1548,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
           positionY: yOffset,
           // A deterministic node runs no agent, so it holds no agent reference --
           // the same shape a gate node has.
-          refAgentId: isGate || det ? null : worker.id,
+          refAgentId: isGate || det || worker.runsNoAgent ? null : worker.id,
           refSkillId: det?.refSkillId,
           refKnowledgeBaseId: det?.refKnowledgeBaseId,
           stateKey: det?.stateKey ?? authoredStateKey(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel),
@@ -1583,7 +1623,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       // form gave six workers 100px each for a 244px card, so they overlapped.
       const { x: posX, y: posY } = workerNodePosition(i, isSequential);
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
-      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[i], pipeline), branchesFor(workers[i], pipeline), decisionKind, classifiers);
+      const det = isGate ? null : stepPlans[i]?.det ?? null;
       const correlation = correlationFor(workers[i], authoredStepsByLabel);
       const node = await storage.createTeamBlueprintNode({
         blueprintId: blueprint.id,
@@ -1591,7 +1631,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         label: createdWorkers[i].name,
         positionX: posX,
         positionY: posY,
-        refAgentId: isGate || det ? null : createdWorkers[i].id,
+        refAgentId: isGate || det || createdWorkers[i].runsNoAgent ? null : createdWorkers[i].id,
         refSkillId: det?.refSkillId,
         refKnowledgeBaseId: det?.refKnowledgeBaseId,
         stateKey: det?.stateKey ?? authoredStateKey(workers[i], authoredStepsByLabel),
@@ -1891,6 +1931,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
 
   for (let i = 0; i < createdWorkers.length; i++) {
     const worker = workers[i];
+    if (createdWorkers[i].runsNoAgent) continue;
     if (worker.workflowSteps?.length) {
       const workerBlueprint = await storage.createBlueprint({
         name: `${worker.name} - Workflow`,
@@ -1941,7 +1982,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         executionGraph: pipeline?.executionGraph || [],
         agentDependencyMatrix: pipeline?.agentDependencyMatrix || [],
         humanCheckpoints: pipeline?.humanCheckpoints || [],
-        workerIds: createdWorkers.map((w: any) => w.id),
+        workerIds: agentWorkers.map((w: any) => w.id),
         edges: pipeline?.edges || [],
         blueprintId: blueprint.id,
       },
@@ -1969,7 +2010,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // domain-specific cases rather than generic latency probes -- and it
   // no-ops safely (returns 0 cases) for any agent whose tags didn't resolve.
   const evalSuiteIds: Record<string, string> = {};
-  for (const created of [teamAgent, ...createdWorkers]) {
+  for (const created of [teamAgent, ...agentWorkers]) {
     try {
       const suite = await storage.createEvalSuite({
         agentId: created.id,
@@ -2040,9 +2081,11 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
 
   return {
     teamAgent,
-    workers: createdWorkers,
+    workers: agentWorkers,
     blueprint,
-    membershipCount: createdWorkers.length,
+    membershipCount: agentWorkers.length,
+    // Steps built as gates or deterministic nodes, which have no agent row.
+    stepsWithoutAgent: createdWorkers.length - agentWorkers.length,
     evalSuiteIds,
     unconnectedBindings,
     unresolvedBindings,

@@ -184,6 +184,8 @@ describe("the correlation itself", () => {
     expect(stepUnchanged(boundStored, { ...bound, config: { ...bound.config, toolName: "get_account" } })).toBe(false);
     expect(stepUnchanged(boundStored, { ...bound, config: { ...bound.config, toolServerId: "srv-2" } })).toBe(false);
     expect(stepUnchanged(boundStored, { ...bound, config: { ...bound.config, toolArgs: { name: "y" } } })).toBe(false);
+    // A step that changed only its forEach list is a changed binding too.
+    expect(stepUnchanged(boundStored, { ...bound, config: { ...bound.config, forEach: "case.parties" } })).toBe(false);
   });
 
   it("does not call a step bound just because it carries stray tool arguments", () => {

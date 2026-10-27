@@ -246,6 +246,7 @@ describe("where it is applied", () => {
     expect(src).toMatch(/if \(Array\.isArray\(edges\).*\) authoredEdges = edges;/);
     expect(at).toBeGreaterThan(0);
     expect(at).toBeGreaterThan(src.indexOf("const authoredStepsByLabel = new Map<string, any>("));
-    expect(at).toBeLessThan(src.indexOf("for (const worker of workers) {"));
+    // ...and before the loop that creates the workers' agent rows.
+    expect(at).toBeLessThan(src.indexOf("for (const [workerIndex, worker] of workers.entries()) {"));
   });
 });

@@ -52,8 +52,8 @@ describe("the node a step becomes", () => {
   });
 
   it("holds no agent reference on a node that runs no agent", () => {
-    expect(source).toContain("refAgentId: isGate || det ? null : worker.id");
-    expect(source).toContain("refAgentId: isGate || det ? null : createdWorkers[i].id");
+    expect(source).toContain("refAgentId: isGate || det || worker.runsNoAgent ? null : worker.id");
+    expect(source).toContain("refAgentId: isGate || det || createdWorkers[i].runsNoAgent ? null : createdWorkers[i].id");
   });
 
   it("prefers the step the author configured over anything the model wrote", () => {
@@ -119,10 +119,12 @@ describe("the node a step becomes", () => {
     expect(source).toMatch(/if \(broken\) \{[\s\S]{0,400}?return null;/);
     // ...and says so, through the warnings the build already returns.
     expect(source).toContain("does not parse (${broken}), so it runs as an agent instead");
-    // Both worker-node paths (tiered and flat) pass the sink.
-    // Both worker-node paths (tiered and flat) pass the sink, and now the step's
-    // branch conditions with it.
-    expect(source.match(/authoredStepsByLabel, \(m\) => structureWarnings\.push\(m\), allMcpServers, branchConditionsFor\(/g) ?? []).toHaveLength(2);
+    // Each step's kind is planned once, before any agent row is created, with
+    // the step's branch conditions; both worker-node paths (tiered and flat)
+    // read that plan, and its warnings reach the build's warnings.
+    expect(source.match(/authoredStepsByLabel, \(m\) => planWarnings\.push\(m\), allMcpServers, branchConditionsFor\(/g) ?? []).toHaveLength(1);
+    expect(source).toContain("structureWarnings.push(...planWarnings);");
+    expect(source.match(/stepPlans\[[^\]]+\]\?\.det \?\? null/g) ?? []).toHaveLength(2);
   });
 
   it("resolves a connector named in prose to its id", () => {

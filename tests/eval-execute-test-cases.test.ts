@@ -167,7 +167,8 @@ describe("POST /api/evals/:id/execute", () => {
 
   it("honours a limit and never runs more than 25", async () => {
     state.cases = Array.from({ length: 40 }, () => testCase());
-    const capped = await post("/api/evals/s1/execute", {});
+    // wait: true keeps a run this long in the request (it would otherwise be queued).
+    const capped = await post("/api/evals/s1/execute", { wait: true });
     expect(capped.body.totalCases).toBe(25);
     const limited = await post("/api/evals/s1/execute", { limit: 3 });
     expect(limited.body.totalCases).toBe(3);

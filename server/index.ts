@@ -15,6 +15,7 @@ import { createServer } from "http";
 import { seedDatabase } from "./seed";
 import { autoResumeRuntimes } from "./agent-runtime";
 import { authMiddleware, seedDefaultAdmin, getSecurityMode, setDefaultOrgId, isLoopbackSocket } from "./auth";
+import { resolveWithRetry } from "./default-org-startup";
 import { storage } from "./storage";
 import { otlpIngestRouter } from "./routes/observability";
 import { auditPullRouter } from "./routes/audit-read";
@@ -318,13 +319,13 @@ app.use((req, res, next) => {
         // finished, or if it failed, those writes threw "organizationId is
         // required" (seen live: connector link/unlink returned 500 an hour
         // after a deploy).
-        const defaultOrg = await storage.ensureDefaultOrganization().catch((err) => {
-          console.error("Default org lookup error:", err);
-          return undefined;
+        // Retried until it resolves (server/default-org-startup.ts): one
+        // swallowed failure here used to leave the default org unset for the
+        // life of the process. Readiness waits on it.
+        const defaultOrg = await resolveWithRetry(() => storage.ensureDefaultOrganization(), {
+          onRetry: (attempt, waitMs, err) => console.error(`Default org lookup error (attempt ${attempt}, retrying in ${waitMs / 1000}s):`, err),
         });
-        if (defaultOrg?.id) {
-          setDefaultOrgId(defaultOrg.id);
-        }
+        setDefaultOrgId(defaultOrg.id);
         await storage.seedDefaultOrganization().catch((err) => {
           console.error("Default org backfill error:", err);
         });

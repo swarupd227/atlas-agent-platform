@@ -773,6 +773,7 @@ export async function applyFlowSync(
             toolName: String(stepCfg.toolName),
             toolServerId: String(stepCfg.toolServerId),
             toolArgs: (stepCfg.toolArgs && typeof stepCfg.toolArgs === "object") ? stepCfg.toolArgs : {},
+            ...(typeof stepCfg.forEach === "string" && stepCfg.forEach.trim() ? { forEach: stepCfg.forEach.trim() } : {}),
           },
         } as any);
         return { pn, node, ok: true as const };

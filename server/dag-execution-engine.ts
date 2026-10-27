@@ -262,6 +262,8 @@ export interface NodePlanConfig {
   toolServerId: string | null;
   toolName: string | null;
   toolArgs: Record<string, unknown> | null;
+  /** tool_call: a JSONata list over state; when set the tool is called once per item ($item, $index in toolArgs). */
+  forEach?: string | null;
   label: string;
   gateType: string | null;
   refToolIds: string[] | null;
@@ -277,6 +279,9 @@ export interface NodePlanConfig {
   /** The team's orchestrator node. It frames and delegates; its own answer is not the run's answer, so its fields are not promoted into shared state. */
   isOrchestrator?: boolean;
 }
+
+/** Most calls a forEach tool step makes in one run: bounds a list that came out far longer than meant. */
+export const FOR_EACH_LIMIT = 50;
 
 export interface StateFieldDef {
   type: string;
@@ -625,6 +630,7 @@ export function computeWaves(
       toolServerId: (node.config as any)?.toolServerId || null,
       toolName: (node.config as any)?.toolName || null,
       toolArgs: ((node.config as any)?.toolArgs as Record<string, unknown> | undefined) || null,
+      forEach: typeof (node.config as any)?.forEach === "string" && (node.config as any).forEach.trim() ? (node.config as any).forEach.trim() : null,
       label: node.label,
       gateType: node.gateType || null,
       decision: node.nodeType === "decision" ? parseDecisionConfig((node.config as any)?.decision) : null,
@@ -2904,16 +2910,18 @@ export class DAGExecutionEngine {
     // from an earlier wave. Same parse as buildPipelineState, so a field
     // readable by a rule is readable by a tool argument.
     const resolvable = resolvableToolArgState(currentState);
+    const withTimeout = <T,>(p: Promise<T>, what: string) => Promise.race([
+      p,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${what} timed out`)), 5000)),
+    ]);
 
-    let args: Record<string, any> = {};
-    try {
+    // `bindings` carries $item and $index when the step runs once per item.
+    const buildArgs = async (bindings?: Record<string, unknown>) => {
+      const args: Record<string, any> = {};
       for (const [name, spec] of Object.entries(nc.toolArgs ?? {})) {
         const expr = (spec as { $expr?: unknown } | null)?.$expr;
         if (typeof expr === "string") {
-          const value = await Promise.race([
-            jsonata(expr).evaluate(resolvable),
-            new Promise((_, reject) => setTimeout(() => reject(new Error(`argument "${name}" timed out`)), 5000)),
-          ]);
+          const value = await withTimeout(jsonata(expr).evaluate(resolvable, bindings), `argument "${name}"`);
           // An argument that resolved to nothing is OMITTED, not sent as null.
           // It used to be sent, and a connector that stringifies its inputs
           // received the text "null": search_accounts searched for an account
@@ -2925,6 +2933,40 @@ export class DAGExecutionEngine {
           args[name] = spec;
         }
       }
+      return args;
+    };
+
+    // forEach: the step calls its tool once per item of a list in state --
+    // "verify each controlling party", "screen each party" -- with the item and
+    // its position bound as $item and $index in the argument expressions. There
+    // was no way to draw that: a flow drew one step per party it expected, so a
+    // case with one more party than the drawing silently went unscreened.
+    //
+    // A list that resolves to nothing fails the step rather than completing with
+    // no calls: a missing field and an empty list look the same from here, and
+    // "screened nobody" must not read as "screened everybody". An author who
+    // means "possibly none" wraps the list in [ ] so an empty one is [].
+    let items: unknown[] | null = null;
+    if (nc.forEach) {
+      let listed: unknown;
+      try {
+        listed = await withTimeout(jsonata(nc.forEach).evaluate(resolvable), "the forEach list");
+      } catch (e: any) {
+        return fail(`Could not read the list ${nc.toolName} runs over: ${e?.message || String(e)}`);
+      }
+      if (listed === undefined || listed === null) {
+        return fail(`The list ${nc.toolName} runs over ("${nc.forEach}") resolved to nothing, so it was not called. If an empty list is expected, wrap the expression in [ ].`);
+      }
+      // A one-element JSONata sequence comes back as the element itself.
+      items = Array.isArray(listed) ? listed : [listed];
+      if (items.length > FOR_EACH_LIMIT) {
+        return fail(`The list ${nc.toolName} runs over has ${items.length} items; a step calls its tool at most ${FOR_EACH_LIMIT} times. Split the list or narrow it.`);
+      }
+    }
+
+    let firstArgs: Record<string, any> = {};
+    try {
+      firstArgs = items ? {} : await buildArgs();
     } catch (e: any) {
       return fail(`Could not build the arguments for ${nc.toolName}: ${e?.message || String(e)}`);
     }
@@ -2945,27 +2987,62 @@ export class DAGExecutionEngine {
     const owner = await storage.getAgent(config.teamAgentId).catch(() => undefined);
     const orgId = owner?.organizationId ?? null;
     const policyBundle = await resolvePolicyBundle(config.teamAgentId, orgId ?? undefined).catch(() => null);
-    const dispatch = await dispatchToolCall({
+    const dispatchOnce = (args: Record<string, any>, scope?: string) => dispatchToolCall({
       agentId: config.teamAgentId,
       orgId,
       tool,
       args,
       policyBundle,
-      ...(config.dagRunId ? { traceId: config.dagRunId, idempotencyScope: config.dagRunId } : {}),
+      ...(config.dagRunId ? { traceId: config.dagRunId, idempotencyScope: scope ?? config.dagRunId } : {}),
     });
+    const isBlocked = (d: { outcome: string }) => d.outcome !== "success" && d.outcome !== "deduplicated";
 
-    const blocked = dispatch.outcome !== "success" && dispatch.outcome !== "deduplicated";
+    if (!items) {
+      const dispatch = await dispatchOnce(firstArgs);
+      const blocked = isBlocked(dispatch);
+      return {
+        nodeId,
+        agentId: "",
+        status: blocked ? "failed" : "completed",
+        output: blocked ? {} : { [nc.stateKey]: dispatch.result ?? null },
+        error: blocked ? `${nc.toolName} did not run: ${dispatch.reason || dispatch.outcome}` : undefined,
+        durationMs: Date.now() - start,
+        promptTokens: 0,
+        completionTokens: 0,
+        traceId: "",
+        toolCallCount: 1,
+      };
+    }
+
+    // One call per item, in order, each through the same governed dispatch.
+    // Each call gets its own idempotency scope, so two items whose arguments
+    // happen to match are still two calls. The first refused call stops the
+    // step, and the message says how many calls had already been made.
+    const results: unknown[] = [];
+    for (const [index, item] of items.entries()) {
+      let args: Record<string, any>;
+      try {
+        args = await buildArgs({ item, index });
+      } catch (e: any) {
+        return { ...fail(`Could not build the arguments for ${nc.toolName} for item ${index + 1} of ${items.length}: ${e?.message || String(e)}`), toolCallCount: index };
+      }
+      const dispatch = await dispatchOnce(args, config.dagRunId ? `${config.dagRunId}:${nodeId}:${index}` : undefined);
+      if (isBlocked(dispatch)) {
+        return { ...fail(`${nc.toolName} did not run for item ${index + 1} of ${items.length} (${index} already made): ${dispatch.reason || dispatch.outcome}`), toolCallCount: index + 1 };
+      }
+      results.push(dispatch.result ?? null);
+    }
     return {
       nodeId,
       agentId: "",
-      status: blocked ? "failed" : "completed",
-      output: blocked ? {} : { [nc.stateKey]: dispatch.result ?? null },
-      error: blocked ? `${nc.toolName} did not run: ${dispatch.reason || dispatch.outcome}` : undefined,
+      status: "completed",
+      // In list order: results[i] is the call for item i.
+      output: { [nc.stateKey]: results },
       durationMs: Date.now() - start,
       promptTokens: 0,
       completionTokens: 0,
       traceId: "",
-      toolCallCount: 1,
+      toolCallCount: items.length,
     };
   }
 
