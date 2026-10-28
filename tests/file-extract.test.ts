@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import JSZip from "jszip";
 import {
   extractTextFromFile,
+  alnumRatio,
+  textLayerUnusable,
+  MIN_ALNUM_RATIO,
   filenameForLog,
   isSupportedFile,
   isImageFile,
@@ -433,5 +436,71 @@ describe("a PDF with no text layer", () => {
 
     expect(r.meta?.needsVision).toBeUndefined();
     expect(r.text.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Telling failed OCR from a document.
+ *
+ * A scan with a BAD text layer is commoner than one with none: of eight real
+ * scans gathered to test the vision path, seven carried OCR and on the
+ * handwritten ones it was noise. Those documents reported `readable: true`
+ * and handed a step the noise, because the no-text-layer check requires EVERY
+ * page to be blank.
+ *
+ * The fixtures below are the actual strings those PDFs produced, and the
+ * numbers in the assertions are measured, not chosen: the three Internet
+ * Archive scans of typed letters score 0.946-0.948, the handwritten National
+ * Archives ones 0.441, 0.463 and 0.469.
+ */
+describe("judging whether a text layer is usable", () => {
+  // Real output from the National Archives EO-14176 scans, repeated to clear
+  // the minimum length -- one short line is not evidence of anything.
+  const GARBAGE = (", [APPROVED FOR RELEASE 2025 UNDER EXECUTIVE ORDER 14176] (I) ¢_L F\" wq -/4 AN» " +
+    "'-_/1 V /y\(,_ ON gt 7 _7(*\“l/‘L/_ @ . ./\ ~ ‘Ham; E‘ ’ /K//f///‘I ; /// /, 0ua// />2/2‘ " +
+    "W/76%‘ %//@£'6»¢, 444!/774//, /77/:<& ” fi4/L43?").repeat(3);
+
+  const SOV_CSV = ("locationId,address,tiv,deductible\n001,Gulfport MS,18500000,0.05\n" +
+    "002,Mobile AL,9400000,0.02\n003,Biloxi MS,22750000,0.05\n").repeat(4);
+
+  it("flags the real failed-OCR text", () => {
+    expect(alnumRatio(GARBAGE)).toBeLessThan(MIN_ALNUM_RATIO);
+    expect(textLayerUnusable(GARBAGE, "pdf")).toBe(true);
+  });
+
+  it("does NOT flag a numeric schedule, which is the thing most at risk", () => {
+    // A SOV is mostly digits and commas and has almost no prose, so a
+    // word-likeness metric rejected this at 0.571 -- below two real garbage
+    // samples. That is why the ratio counts digits as content.
+    expect(alnumRatio(SOV_CSV)).toBeGreaterThan(MIN_ALNUM_RATIO);
+    expect(textLayerUnusable(SOV_CSV, "pdf")).toBe(false);
+  });
+
+  it("does NOT flag a non-Latin script", () => {
+    // \p{L} counts Hebrew as letters. A punctuation-allowlist metric separated
+    // the samples more cleanly and would have failed exactly here, because the
+    // characters marking the garbage are ordinary Unicode punctuation.
+    const hebrew = "המסמך הזה נכתב ביוני 1967 והוא כולל פרטים על השירות הפעיל".repeat(6);
+    expect(textLayerUnusable(hebrew, "pdf")).toBe(false);
+  });
+
+  it("judges only PDFs, so source code is never mistaken for bad OCR", () => {
+    // Braces and operators would read as noise, and there are no pages to
+    // render instead, so there is nothing useful to do about it anyway.
+    const code = "const x = {a: [1,2], b: () => ({...c, d: !!e})}; if (x?.a?.[0] ?? 0) { y += `${z}`; }".repeat(5);
+    expect(alnumRatio(code)).toBeLessThan(MIN_ALNUM_RATIO);   // it would have been flagged
+    expect(textLayerUnusable(code, "text")).toBe(false);       // but it is not a pdf
+    expect(textLayerUnusable(code, null)).toBe(false);
+  });
+
+  it("will not judge too little text", () => {
+    expect(textLayerUnusable("(I) ¢_L F\" wq", "pdf")).toBe(false);
+  });
+
+  it("records the verdict on the extracted row", async () => {
+    // A textless PDF is the OTHER case and must not be confused with this one.
+    const r = await extractTextFromFile(buildTextlessPdf(1), "application/pdf", "scan.pdf");
+    expect(r.meta?.needsVision).toBe(true);
+    expect((r.meta as any)?.textUnusable).toBeUndefined();
   });
 });

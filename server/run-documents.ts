@@ -22,6 +22,7 @@
  * invoice".
  */
 import { readAttachedFiles, buildAttachmentContext } from "./attachment-context";
+import { textLayerUnusable } from "./file-extract";
 import { visionPagesFor, visionNote } from "./document-vision";
 import { FILE_INPUT_TYPE } from "@shared/run-input";
 import type { StateFieldDef } from "./dag-execution-engine";
@@ -52,6 +53,16 @@ export interface RunDocument {
   truncated: boolean;
   /** Characters actually given to the step, present only when fewer than `chars`. */
   charsShown?: number;
+  /**
+   * The text read from this document is noise -- failed OCR rather than
+   * contents -- and its pages have been attached as images alongside it.
+   *
+   * Separate from `readBy` on purpose: the text is still given to the step, so
+   * `readBy` remains "text" and a rule testing that keeps matching. This is the
+   * field to route on when a step must not trust what it was told the document
+   * says, and `pagesShown` confirms the pixels came too.
+   */
+  textUnusable?: true;
   /**
    * How the step received this document. "text" is the extractor's output;
    * "vision" means the file had no text layer and its pages were rendered and
@@ -180,6 +191,27 @@ export async function resolveRunDocuments(
     const vision = meta.needsVision === true && !hasText
       ? await visionPagesFor((row as { content?: Buffer | null }).content ?? null, row.filename)
       : null;
+
+    // The text layer exists but is noise -- a scan whose OCR failed.
+    //
+    // `needsVision` only fires when EVERY page is blank, so this case used to
+    // pass straight through as text: `readable: true`, `readBy: "text"`, and a
+    // step handed strings like `(I) ¢_L F" wq -/4 AN»` as the document. Of
+    // eight real scans gathered to test the vision path, seven carried a text
+    // layer, and on the handwritten ones it was that. Bad OCR is the common
+    // case; no OCR is the rare one.
+    //
+    // The pages are added BESIDE the text, never instead of it. The verdict is
+    // a 0.60 threshold on a character ratio (file-extract.ts), and a threshold
+    // will sometimes be wrong -- so being wrong has to cost tokens rather than
+    // the document. A step gets the text it always got, plus the pixels, plus
+    // a sentence saying the text looks unreliable and to prefer the images.
+    // Re-derived from the text rather than read from `meta.textUnusable`, so
+    // rows extracted before that flag existed are judged too.
+    const textUnusable = hasText && textLayerUnusable(text, row.kind ?? null);
+    const textFallbackPages = textUnusable
+      ? await visionPagesFor((row as { content?: Buffer | null }).content ?? null, row.filename)
+      : null;
     // The extractor already says what it left out and in what unit -- "6 of 18
     // pages, from page 7 on" -- so quote that rather than the vaguer sentence
     // this used to carry. A step told which pages are missing can say so; one
@@ -198,9 +230,33 @@ export async function resolveRunDocuments(
       truncated,
       ...(charsShown < chars ? { charsShown } : {}),
       ...(pages ? { pages } : {}),
+      // `readBy` stays "text" here even when images ride along, because the
+      // text IS still given to the step -- a rule testing `readBy == "text"`
+      // would be wrong to stop matching. `textUnusable` is the new flat field
+      // to route on, and `pagesShown` says the pixels are there too.
       ...(vision ? { readBy: "vision" as const, pagesShown: vision.shown } : hasText ? { readBy: "text" as const } : {}),
+      // The verdict is set whether or not the rescue worked. If rendering
+      // fails, the step still gets this text -- and it needs to be told the
+      // text is noise, which is the whole point. Saying nothing because the
+      // images did not arrive would leave it worse off than before.
+      ...(textUnusable ? { textUnusable: true as const } : {}),
+      ...(textFallbackPages ? { pagesShown: textFallbackPages.shown } : {}),
       ...(vision
         ? { note: visionNote(vision) }
+        : textFallbackPages
+        ? {
+          note: `The text read from this document looks like failed OCR rather than its contents, so its ` +
+            `${textFallbackPages.shown} of ${textFallbackPages.total} page${textFallbackPages.total === 1 ? "" : "s"} ` +
+            `${textFallbackPages.shown === 1 ? "is" : "are"} also attached as images. Read the images and treat the text as unreliable.` +
+            (textFallbackPages.skipped
+              ? ` The remaining ${textFallbackPages.skipped} page${textFallbackPages.skipped === 1 ? " was" : "s were"} not shown: do not conclude anything about what they contain.`
+              : ""),
+        }
+        : textUnusable
+        ? {
+          note: "The text read from this document looks like failed OCR rather than its contents, and its pages " +
+            "could not be rendered as images. Treat the text as unreliable: do not report figures from it without saying where they came from.",
+        }
         : !hasText
         ? { note: UNREADABLE_NOTE }
         : stepCut
@@ -273,6 +329,11 @@ export async function buildRunDocumentContext(
   const scanned = documents.filter((d) => d.readBy === "vision");
   const readable = documents.filter((d) => d.readable && d.readBy !== "vision");
   const unreadable = documents.filter((d) => !d.readable);
+  // A fourth kind that is deliberately in TWO of those paths: failed OCR. Its
+  // text stays in the prompt (the threshold that judged it can be wrong, and
+  // throwing the text away would make that mistake unrecoverable) and its
+  // pages are attached as images as well.
+  const alsoImages = readable.filter((d) => d.textUnusable === true);
 
   const sections: string[] = [];
   const imageFileIds: string[] = [];
@@ -293,7 +354,11 @@ export async function buildRunDocumentContext(
           : `${d.chars.toLocaleString("en-US")} characters read`,
         d.truncated ? "PARTIAL" : null,
       ].filter(Boolean).join(", ");
-      return `- ${d.filename} (${extent})${d.truncated && d.note ? `: ${d.note}` : ""}`;
+      // The inventory line must carry the OCR warning too. A step that reads
+      // only this list would otherwise see "7,411 characters read" beside a
+      // document whose characters are noise, and trust them.
+      const caveat = d.truncated && d.note ? `: ${d.note}` : d.textUnusable ? `: ${d.note ?? ""}` : "";
+      return `- ${d.filename} (${extent}${d.textUnusable ? ", TEXT UNRELIABLE" : ""})${caveat}`;
     });
 
     const { context } = await buildAttachmentContext(
@@ -313,24 +378,33 @@ export async function buildRunDocumentContext(
   // A scan: its pages ride as image blocks, so the prompt's job is to say
   // which attached images are which document. Without that a step holding
   // three scans and 30 images cannot tell them apart.
-  if (scanned.length) {
-    const rows = await readAttachedFiles(scanned.map((d) => d.fileId), orgId);
+  const withImages = [...scanned, ...alsoImages];
+  if (withImages.length) {
+    const rows = await readAttachedFiles(withImages.map((d) => d.fileId), orgId);
     const byId = new Map(rows.map((r) => [r.id, r]));
     const lines: string[] = [];
-    for (const d of scanned) {
+    for (const d of withImages) {
       const row = byId.get(d.fileId);
       // The render is cached on the file's bytes, so this is the same work
       // resolveRunDocuments already did at setup: a cache hit, not a re-render.
       const v = await visionPagesFor((row as { content?: Buffer | null } | undefined)?.content ?? null, d.filename);
       if (!v) continue;
       imageFileIds.push(...v.fileIds);
-      lines.push(`- ${d.filename}: ${visionNote(v)}`);
+      // Why this document's pages are here differs between the two kinds, and
+      // the step needs to know which: for a scan the images are all there is,
+      // for failed OCR they are the trustworthy half of what it was given.
+      lines.push(d.textUnusable
+        ? `- ${d.filename}: ${v.shown} of ${v.total} page${v.total === 1 ? "" : "s"} attached as images. Its text is above but reads as failed OCR -- prefer these images where they disagree.`
+        : `- ${d.filename}: ${visionNote(v)}`);
     }
     if (lines.length) {
       sections.push([
-        scanned.length === documents.length
+        // The REASON a document's pages are here now varies per document (no
+        // text layer, or text that is noise), so it lives on the lines below
+        // rather than in this heading.
+        withImages.length === documents.length && !alsoImages.length
           ? "This run was given the following document(s) as images, because they have no text layer. The pages are attached to this message in order."
-          : "The run was also given the following document(s) as images, because they have no text layer. The pages are attached to this message in order.",
+          : "The run was also given the following document(s) as images. The pages are attached to this message in order.",
         ...lines,
         "",
         "Read them from the attached page images. Anything you cannot make out, say so rather than guessing at it.",

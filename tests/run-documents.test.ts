@@ -609,3 +609,89 @@ describe("page images reach the caller, not just the descriptor", () => {
     expect(ctx.text).toContain("The run was also given the following document(s) as images");
   });
 });
+
+/**
+ * A scan whose OCR failed: the pages go in BESIDE the text, not instead of it.
+ *
+ * `needsVision` only fires when every page is blank, so a scan with a bad text
+ * layer used to pass through as ordinary text -- `readable: true`,
+ * `readBy: "text"`, and the step handed strings like `(I) ¢_L F" wq -/4 AN»`
+ * as the document's contents. Seven of the eight real scans gathered to test
+ * the vision path were this case, not the no-text-layer one.
+ *
+ * The text is deliberately kept: the verdict is a threshold, and a threshold
+ * is sometimes wrong, so being wrong has to cost tokens rather than the
+ * document.
+ */
+describe("a scan whose text layer is failed OCR", () => {
+  const GARBAGE = (", [APPROVED FOR RELEASE 2025 UNDER EXECUTIVE ORDER 14176] (I) ¢_L F\" wq -/4 AN» " +
+    "'-_/1 V /y\(,_ ON gt 7 _7(*\“l/‘L/_ @ . ./\ ~ ‘Ham; E‘ ’ /K//f///‘I ; /// /, 0ua// />2/2‘").repeat(3);
+
+  const badOcr = (over: Record<string, unknown> = {}) => file({
+    id: "f-ocr",
+    filename: "BeaconStreet_SOV_handwritten.pdf",
+    kind: "pdf",
+    extractedText: GARBAGE,
+    extractMeta: { pages: 2, empty: false },
+    content: Buffer.from("%PDF-1.4 fake bytes"),
+    ...over,
+  });
+
+  beforeEach(() => {
+    state.visionResult = { fileIds: ["fa-1", "fa-2"], shown: 2, total: 2 };
+  });
+
+  it("attaches the pages and says the text is unreliable", async () => {
+    state.files.set("f-ocr", badOcr());
+    const { documents } = await resolveRunDocuments(["f-ocr"], "org-1");
+    const d = documents[0];
+
+    expect(d.textUnusable).toBe(true);
+    expect(d.pagesShown).toBe(2);
+    expect(state.visionCalls).toHaveLength(1);
+    // The text is still given, and still counted -- it was not thrown away.
+    expect(d.readable).toBe(true);
+    expect(d.chars).toBe(GARBAGE.trim().length);
+    // readBy stays "text" so a rule testing it keeps matching; textUnusable is
+    // the field to route on.
+    expect(d.readBy).toBe("text");
+    expect(d.note).toMatch(/failed OCR/);
+  });
+
+  it("gives the step both the text and the images", async () => {
+    state.files.set("f-ocr", badOcr());
+    const { documents } = await resolveRunDocuments(["f-ocr"], "org-1");
+    const { text: context, imageFileIds } = await buildRunDocumentContext(documents, "org-1");
+
+    expect(imageFileIds).toEqual(["fa-1", "fa-2"]);
+    expect(state.attachmentCalls).toHaveLength(1);          // the text was inlined too
+    expect(context).toContain("TEXT UNRELIABLE");           // the inventory says so
+    expect(context).toMatch(/prefer these images/);
+  });
+
+  it("still warns when the pages cannot be rendered", async () => {
+    // The worst outcome would be silence: the step gets noise and is told
+    // nothing, which is worse than before this existed.
+    state.files.set("f-ocr", badOcr());
+    state.visionResult = null;
+    const { documents } = await resolveRunDocuments(["f-ocr"], "org-1");
+    const d = documents[0];
+
+    expect(d.textUnusable).toBe(true);
+    expect(d.pagesShown).toBeUndefined();
+    expect(d.note).toMatch(/could not be rendered/);
+  });
+
+  it("leaves a document with good text alone", async () => {
+    const { documents } = await resolveRunDocuments(["f-sov"], "org-1");
+    expect(documents[0].textUnusable).toBeUndefined();
+    expect(state.visionCalls).toHaveLength(0);              // no render, no cost
+  });
+
+  it("does not judge a non-PDF by the same ratio", async () => {
+    state.files.set("f-code", file({ id: "f-code", filename: "config.json", kind: "json", extractedText: GARBAGE }));
+    const { documents } = await resolveRunDocuments(["f-code"], "org-1");
+    expect(documents[0].textUnusable).toBeUndefined();
+    expect(state.visionCalls).toHaveLength(0);
+  });
+});

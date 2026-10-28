@@ -260,6 +260,70 @@ function describeLocator(loc: SectionLocator | undefined): string {
   return "the rest of the document";
 }
 
+/**
+ * Below this share of letters-and-digits, a PDF's text layer is treated as
+ * unusable OCR rather than as the document's contents.
+ *
+ * Calibrated on real scans, not guessed. Three Internet Archive scans of typed
+ * letters (good OCR) measure 0.946-0.948; prose 0.971, a Hebrew sentence 1.000,
+ * a numeric SOV schedule 0.907, a pipe-separated table 0.778. Three National
+ * Archives scans of HANDWRITING, whose OCR is strings like `(I) ¢_L F" wq -/4
+ * AN»`, measure 0.441, 0.463 and 0.469. 0.60 sits in the gap, with the nearest
+ * legitimate sample at 0.778 and the nearest garbage at 0.469.
+ *
+ * A fourth handwritten scan measures 0.803 and is NOT caught: it is a typed
+ * memorandum with handwriting on it, and its text is largely usable. Catching
+ * the clear cases and leaving the ambiguous ones as text is the intended bias,
+ * because the text is never discarded -- the pages are added BESIDE it.
+ */
+export const MIN_ALNUM_RATIO = 0.6;
+
+/** Too little text to judge. Two hundred characters of garbage is evidence; a
+ *  ten-character caption is not, whatever its ratio. */
+export const MIN_CHARS_TO_JUDGE_TEXT = 200;
+
+/**
+ * The share of a text's non-space characters that are letters or digits.
+ *
+ * Deliberately script-agnostic: `\p{L}` and `\p{N}` count Hebrew, Arabic and
+ * CJK exactly as they count Latin, so a legitimate document in any script
+ * scores high. An earlier attempt measured "characters outside a punctuation
+ * allowlist", which separated the samples even more cleanly and was wrong --
+ * under Unicode classes the very characters that mark this garbage (`¢ » “ ‘ \
+ * _ ~`) are ordinary punctuation and currency, so that metric could only work
+ * by assuming Latin text and would have flagged legitimate CJK documents.
+ */
+export function alnumRatio(text: string): number {
+  let nonSpace = 0;
+  let alnum = 0;
+  for (const ch of text) {
+    if (/\s/u.test(ch)) continue;
+    nonSpace++;
+    if (/[\p{L}\p{N}]/u.test(ch)) alnum++;
+  }
+  return nonSpace === 0 ? 0 : alnum / nonSpace;
+}
+
+/**
+ * Whether extracted text is too corrupt to be read as the document.
+ *
+ * This is the BAD-OCR case, and it is commoner in the wild than no OCR at all:
+ * of eight real scans gathered to test this, seven carried a text layer and on
+ * the handwritten ones it was noise. Such a document used to report
+ * `readable: true, readBy: "text"` and hand a step the noise, with the pixels
+ * never looked at, because `needsVision` requires EVERY page to be blank.
+ *
+ * Says nothing about files that are not PDFs: there are no pages to render
+ * instead, and source code -- legitimately dense in braces and operators --
+ * would be the main thing a ratio like this would misread.
+ */
+export function textLayerUnusable(text: string, kind: string | null | undefined): boolean {
+  if (kind !== "pdf") return false;
+  const trimmed = text.trim();
+  if (trimmed.length < MIN_CHARS_TO_JUDGE_TEXT) return false;
+  return alnumRatio(trimmed) < MIN_ALNUM_RATIO;
+}
+
 /** Whole sections in order while they fit MAX_DOCUMENT_CHARS. The first is
  *  always kept, so a document is never reduced to nothing. */
 export function keepSections(
@@ -1205,6 +1269,10 @@ export async function extractTextFromFile(
         coverage,
         empty: noTextAnywhere,
         ...(noTextAnywhere && pdf.total > 0 ? { needsVision: true } : {}),
+        // There IS text, but it is noise -- a scan whose OCR failed. Recorded
+        // so a reader of the row can see the verdict; the descriptor re-derives
+        // it from the text anyway, so rows written before this still get it.
+        ...(!noTextAnywhere && textLayerUnusable(text, "pdf") ? { textUnusable: true } : {}),
       },
     };
   }
