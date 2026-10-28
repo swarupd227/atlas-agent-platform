@@ -33,6 +33,7 @@ import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBl
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { RunSpanCollector } from "./run-spans";
 import { evaluateRule } from "./rule-evaluator";
+import { resolveRunModel, type RunModelSource } from "./run-model";
 import { pipelineGuidanceFor, type GuidanceEdge } from "./pipeline-guidance";
 import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES } from "./services/pii/pii-masking-engine";
 import type { RuleGroup, OutputContract } from "@shared/schema";
@@ -1315,9 +1316,11 @@ export async function executePromptWithMcp(
   let dispatchSkillAllowlist: Set<string> | null = null;
   let resolvedActiveSkills: Awaited<ReturnType<typeof storage.getSkillsByIds>> = [];
   let docGenerationMode = resolveDocumentMode(null);
+  let agentModel: RunModelSource | null = null;
   try {
     const agentRec = await storage.getAgent(agentId);
     docGenerationMode = resolveDocumentMode((agentRec as any)?.documentGenerationMode);
+    agentModel = agentRec ?? null;
     const rawPre = (agentRec as any)?.preloadedSkills;
     const skillIds: string[] = Array.isArray(rawPre)
       ? rawPre.map((p: any) => p?.skillId).filter(Boolean)
@@ -1664,8 +1667,8 @@ export async function executePromptWithMcp(
     startedAt: new Date().toISOString(),
   });
 
-  const providerName = options?.modelProvider || "openai";
-  const modelName = options?.modelName || "gpt-4.1";
+  // The caller's model, else the agent's own (server/run-model.ts).
+  const { provider: providerName, model: modelName } = resolveRunModel(options, agentModel);
   // A code-execution skill on a non-Claude agent is recorded as a step so the
   // pairing is visible in the trace rather than looking like a bug. It is only
   // a WARNING when nothing else covers the capability -- once the portable
