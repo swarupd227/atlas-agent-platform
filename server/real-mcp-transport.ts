@@ -17,21 +17,96 @@ import { Router, type Request, type Response } from "express";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { RealMcpBase } from "./real-mcp-base";
+import type { RealMcpBase, McpToolResult } from "./real-mcp-base";
 import { storage } from "./storage";
+import type { McpServer } from "@shared/schema";
+import type { DispatchResult } from "./tool-dispatcher";
 
 /**
  * A leaked/misused agent API key can only reach the specific MCP servers its
  * own agent was explicitly granted via "Assign MCP Server" -- not any org
- * integration ambiently. Resolves this connector's own mcp_servers row (via
- * the integrationId reverse-lookup added alongside this feature) and checks
- * agent_mcp_servers for a matching link.
+ * integration ambiently. This returns the agent's own mcp_servers row for this
+ * connector: one it is linked to, owned by its organization or a platform
+ * catalog row. That row names the connection the call uses.
+ *
+ * Resolved from the agent's links rather than by integration id: an
+ * integration has one row per connection (production held 7 for postgres), and
+ * a lookup by integration id returned whichever was created first, so an agent
+ * linked to any other row was refused and one that passed queried the org's
+ * default connection instead of its own.
+ *
+ * Two linked rows for one integration are refused: the URL names the
+ * integration, not the connection, so the call cannot say which it means.
  */
-export async function isAgentAuthorizedForIntegration(agentId: string, integrationId: string): Promise<boolean> {
-  const server = await storage.getMcpServerByIntegrationId(integrationId);
-  if (!server) return false;
+export async function resolveAgentConnectorServer(
+  agentId: string, integrationId: string, orgId: string,
+): Promise<{ server: McpServer } | { status: 403 | 409; error: string }> {
   const links = await storage.getAgentMcpServers(agentId);
-  return links.some(l => l.serverId === server.id);
+  const rows = (await Promise.all(links.map(l => storage.getMcpServer(l.serverId))))
+    .filter((s): s is McpServer => !!s && s.integrationId === integrationId
+      && (s.organizationId == null || s.organizationId === orgId));
+  if (rows.length === 0) {
+    return { status: 403, error: `This agent is not linked to the '${integrationId}' MCP server. Assign it via the agent's MCP Servers tab first.` };
+  }
+  if (rows.length > 1) {
+    return { status: 409, error: `This agent is linked to ${rows.length} '${integrationId}' MCP servers, and this endpoint cannot tell which connection a call means. Unlink all but one.` };
+  }
+  return { server: rows[0] };
+}
+
+/**
+ * A tools/call from outside Astra, decided by the same gates as a call the
+ * agent makes inside it (lockdown, policy, AAR, warrant, rate limit), recorded
+ * in tool_invocations and counted by the PDP shadow comparison. The skill
+ * allow-list and declared scope belong to a run, and an external call has none.
+ * Policies that cannot be read refuse the call: a PDP error fails closed.
+ */
+export async function callConnectorToolGoverned(
+  base: RealMcpBase, integrationId: string, server: McpServer,
+  orgId: string, agentId: string, name: string, args: Record<string, unknown>,
+): Promise<McpToolResult> {
+  const def = base.tools.find(t => t.name === name);
+  if (!def) return refused(`Unknown tool '${name}' on '${integrationId}'.`);
+  // Lazy, like the dispatcher's own connector import: every connector router
+  // loads this module, and the dispatcher reaches back into the registry.
+  const { resolvePolicyBundle } = await import("./routes/helpers");
+  const { dispatchToolCall } = await import("./tool-dispatcher");
+  let policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>>;
+  try {
+    policyBundle = await resolvePolicyBundle(agentId, orgId);
+  } catch {
+    return refused("This agent's policies could not be read, so the call was refused.");
+  }
+  const dispatch = await dispatchToolCall({
+    agentId,
+    orgId,
+    args,
+    policyBundle,
+    tool: {
+      serverId: server.id,
+      serverName: server.name,
+      serverUrl: server.url ?? "",
+      toolName: def.name,
+      toolDescription: def.description,
+      toolInputSchema: def.inputSchema,
+      enterpriseIntegration: integrationId,
+      connectionId: server.connectionId || undefined,
+    },
+  });
+  return toMcpToolResult(dispatch);
+}
+
+/** A dispatch as an MCP tool result: the connector's own result when it ran, else the gate's refusal as an error. */
+export function toMcpToolResult(d: DispatchResult): McpToolResult {
+  if (d.result && Array.isArray(d.result.content)) return d.result;
+  const text = d.outcome === "gate_requires_approval"
+    ? `Approval required: ${d.reason}${d.approvalId ? ` (approval ${d.approvalId}, decided in Astra)` : ""}`
+    : d.error ?? d.reason ?? `Tool call refused (${d.outcome}).`;
+  return refused(text);
+}
+
+function refused(text: string): McpToolResult {
+  return { content: [{ type: "text", text }], isError: true };
 }
 
 /**
@@ -68,11 +143,12 @@ export function createMcpProtocolRouter(base: RealMcpBase, integrationId: string
       return;
     }
 
-    const authorized = await isAgentAuthorizedForIntegration(agentId, integrationId);
-    if (!authorized) {
-      res.status(403).json({ error: `This agent is not linked to the '${integrationId}' MCP server. Assign it via the agent's MCP Servers tab first.` });
+    const resolved = await resolveAgentConnectorServer(agentId, integrationId, orgId);
+    if ("error" in resolved) {
+      res.status(resolved.status).json({ error: resolved.error });
       return;
     }
+    const connectorServer = resolved.server;
 
     // Fresh Server + transport per request -- the shipped SDK's own usage
     // pattern for stateless mode assumes this; a shared instance across
@@ -94,7 +170,8 @@ export function createMcpProtocolRouter(base: RealMcpBase, integrationId: string
     // type error in this handler's own logic.
     server.setRequestHandler(CallToolRequestSchema, (async (request: { params: { name: string; arguments?: Record<string, unknown> } }) => {
       const { name, arguments: args } = request.params;
-      return base.callTool(name, args ?? {}, orgId, agentId);
+      // Through the dispatcher's gates, never the connector directly (S0.3).
+      return callConnectorToolGoverned(base, integrationId, connectorServer, orgId, agentId, name, args ?? {});
     }) as Parameters<typeof server.setRequestHandler>[1]);
 
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
