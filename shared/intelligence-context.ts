@@ -233,6 +233,59 @@ export function classifyStateKey(key: string): KeyKind {
 export type Subject = string;
 
 /**
+ * The subject types a caller may declare. The same set the id patterns below
+ * recognise, plus `period`, which is keyed off the state KEY rather than a
+ * value shape and so has no pattern of its own.
+ *
+ * A closed list, because an open one silently invents business objects: a typo
+ * like "policyy:POL-2026-8891" would anchor a decision to an object nothing
+ * else will ever match, and the record would look as legitimate as any other.
+ */
+export const SUBJECT_TYPES = ["submission", "policy", "binder", "broker", "agency", "account", "period"] as const;
+
+/**
+ * Where a run's declared subject lives in state.
+ *
+ * Reserved (`__`) so it is plumbing to every other reader -- it must not reach
+ * a prompt as though an upstream step had decided it -- and read explicitly by
+ * extractSubjects, which skips plumbing keys for exactly that reason.
+ */
+export const RUN_SUBJECT_STATE_KEY = "__subject";
+
+/**
+ * Validates one declared subject, returning the normalised form or why not.
+ *
+ * Measured 2026-10-27: 8 of 12 teams in the 40 most recent runs had every
+ * agent step report `no_subject`, because this layer could only find a
+ * business object by matching an id SHAPE in state (SUB-, POL-, CP-, ACCT-,
+ * AGY-, BRK-). A journey whose object has a name and no id -- "Riverbend
+ * Distribution Partners LLC" -- can never be anchored by a pattern, so the
+ * caller is allowed to say what the run is about instead. What a caller may
+ * NOT do is invent a type, hence the closed list: a declared anchor that
+ * resolves to nothing is worse than no anchor, because it reads as one.
+ */
+export function parseDeclaredSubject(raw: unknown): { subject: Subject } | { error: string } {
+  if (typeof raw !== "string" || !raw.trim()) return { error: "a subject must be a non-empty string of the form <type>:<value>" };
+  const at = raw.indexOf(":");
+  if (at <= 0) return { error: `"${raw.slice(0, 60)}" is not of the form <type>:<value>` };
+  const type = raw.slice(0, at).trim().toLowerCase();
+  if (!(SUBJECT_TYPES as readonly string[]).includes(type)) {
+    return { error: `"${type}" is not a subject type; expected one of ${SUBJECT_TYPES.join(", ")}` };
+  }
+  // Collapsed and bounded rather than rejected on whitespace: a name typed by
+  // a person is the expected value here, and "Riverbend  Partners" and
+  // "Riverbend Partners" must not become two objects.
+  const rawValue = raw.slice(at + 1);
+  // Checked BEFORE the collapse below, or it can never fire: /\s+/ eats
+  // newlines, and a pasted paragraph would pass as a business object.
+  if (/[\r\n]/.test(rawValue)) return { error: `a ${type} subject value cannot span lines` };
+  const value = rawValue.replace(/\s+/g, " ").trim();
+  if (!value) return { error: `a ${type} subject needs a value after the colon` };
+  if (value.length > 120) return { error: `a ${type} subject value is limited to 120 characters` };
+  return { subject: `${type}:${value}` };
+}
+
+/**
  * Patterns that identify a business object in a state value. Deliberately
  * narrow: a false subject is worse than a missed one, because it would anchor
  * a decision to something that is not the thing it decided.
@@ -322,6 +375,17 @@ const PERIOD_VALUE = /^\s*(20\d\d-(?:0[1-9]|1[0-2]))\s*$/;
 export function extractSubjects(state: Record<string, unknown> | null | undefined): Array<{ subject: Subject; fromKey: string }> {
   if (!state || typeof state !== "object") return [];
   const found = new Map<Subject, string>();
+  // The run's declared subject, read before the plumbing skip below: the key is
+  // reserved so no other reader treats it as business state, which also means
+  // the generic loop would never see it.
+  const declared = (state as Record<string, unknown>)[RUN_SUBJECT_STATE_KEY];
+  for (const raw of Array.isArray(declared) ? declared : declared === undefined ? [] : [declared]) {
+    const parsed = parseDeclaredSubject(raw);
+    // An invalid one is dropped silently HERE because the route rejects it with
+    // a 400 before a run starts; this is the second line of defence, not the
+    // place a caller learns about a typo.
+    if ("subject" in parsed && !found.has(parsed.subject)) found.set(parsed.subject, RUN_SUBJECT_STATE_KEY);
+  }
   for (const [key, value] of Object.entries(state)) {
     if (classifyStateKey(key) === "plumbing") continue;
     const text = typeof value === "string" ? value : JSON.stringify(value ?? "");

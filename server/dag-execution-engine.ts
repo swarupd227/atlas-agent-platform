@@ -7,6 +7,7 @@ import { searchKnowledgeBaseChunks } from "./embeddings";
 import { rerankChunks } from "./retrieval-rerank";
 import { raiseGuardrailReview } from "./guardrail-review";
 import { priorDecisionsForPrompt, recordRunDecisions } from "./intelligence-context";
+import { RUN_SUBJECT_STATE_KEY } from "@shared/intelligence-context";
 import { recomputeOutcomeKpis, resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
@@ -4099,6 +4100,19 @@ export interface RunTeamAgentDagOptions {
   errorStrategy?: "fail_fast" | "best_effort";
   /** What the run is given besides its request: values for the team's input fields (shared/run-input.ts), checked before the run row is written. */
   input?: Record<string, unknown>;
+  /**
+   * What this run is ABOUT, as "<type>:<value>" business objects.
+   *
+   * The Intelligence Context layer anchors durable decisions on the business
+   * object, and could previously only find one by matching an id SHAPE in
+   * state. Measured 2026-10-27: 8 of 12 teams in the 40 most recent runs had
+   * every agent step report `no_subject`, including one with 132 agent steps,
+   * because their objects have names and no ids. A caller that knows what the
+   * run is about says so here; the route validates each against the closed
+   * type list (shared/intelligence-context.ts parseDeclaredSubject) so a typo
+   * cannot invent an object that nothing will ever match again.
+   */
+  subjects?: string[];
   /** The run row exists; execution is about to start. A caller that keeps its own record of the run stores the id here, so a process restart can still tie the two together. */
   onRunCreated?: (dagRunId: string) => void | Promise<void>;
   onNodeStart?: (nodeId: string, wave: number, label: string, totalWaves: number) => void;
@@ -4205,7 +4219,7 @@ interface DagRunSetup {
 // caller can hand the dagRunId to a client to watch BEFORE the (potentially
 // 30-minute, if a gate is hit) execution finishes. Throws "Blueprint has no
 // nodes to run" before anything is persisted if the blueprint is empty.
-async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, request: string, input?: Record<string, unknown>): Promise<DagRunSetup> {
+async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, request: string, input?: Record<string, unknown>, subjects?: string[]): Promise<DagRunSetup> {
   const [nodes, edges, teamAgent] = await Promise.all([
     storage.getTeamBlueprintNodes(blueprintId),
     storage.getTeamBlueprintEdges(blueprintId),
@@ -4253,6 +4267,9 @@ async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, re
   }
 
   const initialState: Record<string, any> = { ...given.value, request };
+  // Under the reserved key, so no step reads it as business state it decided,
+  // and extractSubjects reads it explicitly.
+  if (subjects?.length) initialState[RUN_SUBJECT_STATE_KEY] = subjects;
 
   const dagRun = await storage.createDagExecutionRun({
     teamAgentId,
@@ -4467,7 +4484,7 @@ export async function runTeamAgentDag(
   request: string,
   opts?: RunTeamAgentDagOptions,
 ): Promise<{ dagRunId: string; result: DAGExecutionResult; wavePlan: ComputedWavePlan }> {
-  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request, opts?.input);
+  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request, opts?.input, opts?.subjects);
   await opts?.onRunCreated?.(setup.dagRun.id);
   const result = await executeTeamAgentDagRun(setup, teamAgentId, opts);
   return { dagRunId: setup.dagRun.id, result, wavePlan: setup.wavePlan };
@@ -4487,7 +4504,7 @@ export async function startTeamAgentDagRun(
   request: string,
   opts?: RunTeamAgentDagOptions,
 ): Promise<{ dagRunId: string; wavePlan: ComputedWavePlan }> {
-  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request, opts?.input);
+  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request, opts?.input, opts?.subjects);
   const startMs = Date.now();
   executeTeamAgentDagRun(setup, teamAgentId, opts)
     .then((result) => {

@@ -28,6 +28,7 @@ import { callClaude } from "../claude";
 import { buildRunExplanationContext, buildExplanationPrompt, RUN_EXPLAINER_SYSTEM } from "../run-explainer";
 import { z, ZodError } from "zod";
 import { parseAIJsonResponse, AIResponseParseError } from "../claude";
+import { parseDeclaredSubject } from "@shared/intelligence-context";
 import {
   insertLoggingIntegrationSchema,
   insertAgentSchema,
@@ -21385,13 +21386,26 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const blueprintId: string | undefined = (teamAgent as any).blueprintId;
       if (!blueprintId) return res.status(400).json({ error: "Agent has no blueprintId" });
 
+      // What the run is ABOUT, when the caller knows: "<type>:<value>" business
+      // objects the Intelligence Context layer anchors decisions on. Validated
+      // here, before a run row exists, so a typo is a 400 a caller can read
+      // rather than an object nothing will ever match again (8 of 12 teams had
+      // no anchor at all before this; measured 2026-10-27).
+      const declared = req.body?.subject ?? req.body?.subjects;
+      const subjects: string[] = [];
+      for (const raw of Array.isArray(declared) ? declared : declared === undefined ? [] : [declared]) {
+        const parsed = parseDeclaredSubject(raw);
+        if ("error" in parsed) return res.status(400).json({ error: parsed.error });
+        if (!subjects.includes(parsed.subject)) subjects.push(parsed.subject);
+      }
+
       try {
         const { dagRunId, wavePlan } = await startTeamAgentDagRun(
           teamAgentId,
           blueprintId,
           req.body?.request || "",
           // The team's input fields (shared/run-input.ts); the setup refuses what does not fit.
-          { errorStrategy: (req.body?.errorStrategy as "fail_fast" | "best_effort") || "best_effort", ...(req.body?.input !== undefined ? { input: req.body.input } : {}) },
+          { errorStrategy: (req.body?.errorStrategy as "fail_fast" | "best_effort") || "best_effort", ...(req.body?.input !== undefined ? { input: req.body.input } : {}), ...(subjects.length ? { subjects } : {}) },
         );
 
         res.status(202).json({

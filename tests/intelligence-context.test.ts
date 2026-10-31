@@ -15,6 +15,7 @@ import path from "path";
 import {
   classifyStateKey, extractSubjects, decisionStateOf, precedentAllowedFor,
   roleOfStateKey, buildStepIndex, traceStateOf, isDurableRole, teamStateKeyFor,
+  parseDeclaredSubject, RUN_SUBJECT_STATE_KEY, SUBJECT_TYPES,
 } from "../shared/intelligence-context";
 
 const runs: any[] = [];
@@ -1859,5 +1860,89 @@ describe("the record tells the four silences apart", () => {
     const engine = readFileSync(path.join(__dirname, "..", "server", "dag-execution-engine.ts"), "utf8");
     expect(engine).toContain("priorContext: priorDecisions,");
     expect(engine, "the subjects-length gate is back").not.toMatch(/priorDecisions\.subjects\.length \? \{ priorContext/);
+  });
+});
+
+/**
+ * A run can SAY what it is about.
+ *
+ * Measured on the deployed build 2026-10-27, after the layer could finally
+ * report its own skips: 8 of 12 teams in the 40 most recent runs had every
+ * agent step report `no_subject` -- 132 agent steps in one team alone -- because
+ * a business object could only be found by matching an id shape in state. A
+ * journey whose object is "Riverbend Distribution Partners LLC" has no id to
+ * match, so it could never be anchored, and 83% of agent steps got no
+ * precedent for that reason rather than for want of records.
+ */
+describe("a declared run subject", () => {
+  it("accepts a type from the closed list, normalising the value", () => {
+    expect(parseDeclaredSubject("submission:SUB-2026-4471")).toEqual({ subject: "submission:SUB-2026-4471" });
+    // A name is the point: this is the case no pattern can reach.
+    expect(parseDeclaredSubject("account:Riverbend Distribution Partners LLC")).toEqual({ subject: "account:Riverbend Distribution Partners LLC" });
+    // Collapsed, so two spellings of one name are not two objects.
+    expect(parseDeclaredSubject("  Account : Riverbend  Distribution   Partners LLC  ")).toEqual({ subject: "account:Riverbend Distribution Partners LLC" });
+  });
+
+  it("refuses a type that is not one, rather than inventing an object", () => {
+    // The failure this guards is silent: "policyy:POL-2026-8891" would anchor a
+    // decision to something nothing else ever matches, and the record would
+    // look exactly as legitimate as a real one.
+    for (const bad of ["policyy:POL-2026-8891", "Submision:SUB-2026-4471", "customer:ACME", "SUB-2026-4471"]) {
+      const r = parseDeclaredSubject(bad);
+      expect("error" in r, bad).toBe(true);
+      if ("error" in r) expect(r.error.length, bad).toBeGreaterThan(10);
+    }
+    // And the message names what IS allowed, so a caller can fix it.
+    const r = parseDeclaredSubject("customer:ACME");
+    if ("error" in r) for (const t of SUBJECT_TYPES) expect(r.error).toContain(t);
+  });
+
+  it("refuses an empty, oversized or multi-line value", () => {
+    for (const bad of ["account:", "account:   ", "", "   ", null, 42, {}, "account:" + "x".repeat(121), "account:one\ntwo"]) {
+      expect("error" in parseDeclaredSubject(bad as unknown), JSON.stringify(bad)).toBe(true);
+    }
+    expect(parseDeclaredSubject("account:" + "x".repeat(120))).toEqual({ subject: "account:" + "x".repeat(120) });
+  });
+
+  it("is read out of state by extractSubjects, one or many", () => {
+    const one = extractSubjects({ [RUN_SUBJECT_STATE_KEY]: "account:Riverbend Distribution Partners LLC", request: "no ids anywhere in here" });
+    expect(one.map(x => x.subject)).toEqual(["account:Riverbend Distribution Partners LLC"]);
+    expect(one[0].fromKey).toBe(RUN_SUBJECT_STATE_KEY);
+    const many = extractSubjects({ [RUN_SUBJECT_STATE_KEY]: ["account:Riverbend", "period:2026-11"] });
+    expect(many.map(x => x.subject).sort()).toEqual(["account:Riverbend", "period:2026-11"]);
+  });
+
+  it("does not let an invalid declared value through, and keeps other plumbing out", () => {
+    // The route 400s first; this is the second line of defence.
+    expect(extractSubjects({ [RUN_SUBJECT_STATE_KEY]: ["customer:ACME", "account:Good Co"] }).map(x => x.subject)).toEqual(["account:Good Co"]);
+    // Every other reserved key stays plumbing: a declared subject is the one
+    // exception, not a hole in the rule.
+    expect(classifyStateKey(RUN_SUBJECT_STATE_KEY)).toBe("plumbing");
+    expect(extractSubjects({ __retrieval_overlap: "SUB-2026-4471" }).map(x => x.subject)).toEqual([]);
+  });
+
+  it("coexists with the ids found in state, without duplicating them", () => {
+    const found = extractSubjects({
+      [RUN_SUBJECT_STATE_KEY]: "submission:SUB-2026-4471",
+      intake: "Opened SUB-2026-4471 for ACCT-100417",
+    });
+    const subjects = found.map(x => x.subject).sort();
+    expect(subjects).toEqual(["account:ACCT-100417", "submission:SUB-2026-4471"]);
+    // Declared wins the attribution for the one they share: it is what the
+    // caller asserted, not something inferred from prose.
+    expect(found.find(x => x.subject === "submission:SUB-2026-4471")!.fromKey).toBe(RUN_SUBJECT_STATE_KEY);
+  });
+
+  it("the run route validates before a run row exists, and the engine carries it", () => {
+    const route = readFileSync(path.join(__dirname, "..", "server", "routes", "runtime.ts"), "utf8");
+    expect(route).toContain("parseDeclaredSubject(raw)");
+    // 400 on a bad one -- not a dropped field, which is how a caller ends up
+    // believing a run was anchored when it was not.
+    expect(route).toMatch(/if \("error" in parsed\) return res\.status\(400\)/);
+    const engine = readFileSync(path.join(__dirname, "..", "server", "dag-execution-engine.ts"), "utf8");
+    expect(engine).toContain("initialState[RUN_SUBJECT_STATE_KEY] = subjects;");
+    // BOTH entry points, or the anchor works from one route and silently not
+    // from the other.
+    expect((engine.match(/setupTeamAgentDagRun\(teamAgentId, blueprintId, request, opts\?\.input, opts\?\.subjects\)/g) ?? []).length).toBe(2);
   });
 });
