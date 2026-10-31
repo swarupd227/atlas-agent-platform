@@ -9,6 +9,7 @@ import {
   NO_FILTER_INDUSTRY_IDS,
   filterByIndustry,
   industryIdAliases,
+  industryDisplayName,
   industryMatches,
   isKnownIndustry,
   pickAgentIndustry,
@@ -85,6 +86,23 @@ describe("industryIdAliases", () => {
   it("never returns undefined or null for an absent id", () => {
     expect(industryIdAliases(null)).toEqual([""]);
     expect(industryIdAliases(undefined)).toEqual([""]);
+  });
+
+  it("gives an industry a name a person would read, never the raw id", () => {
+    // Ids were reaching model prompts verbatim and landing in generated prose: 25 ontology
+    // concepts ended up saying "in the context of custom operations" because the cross-industry
+    // workspace's id is the word "custom".
+    expect(industryDisplayName("custom")).toBe("cross-industry");
+    expect(industryDisplayName("cross_industry")).toBe("cross-industry");
+    expect(industryDisplayName("financial_services")).toBe("Financial Services");
+    expect(industryDisplayName("insurance")).toBe("Insurance");
+  });
+
+  it("still produces words for an industry it does not know, and for none at all", () => {
+    expect(industryDisplayName("aerospace_defense")).toBe("aerospace defense");
+    expect(industryDisplayName(null)).toBe("enterprise");
+    expect(industryDisplayName("")).toBe("enterprise");
+    expect(industryDisplayName("   ")).toBe("enterprise");
   });
 
   it("returns a fresh array, so a caller cannot mutate the shared constant", () => {

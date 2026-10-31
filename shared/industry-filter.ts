@@ -8,7 +8,8 @@
  * always included when filtering, so a filter narrows a catalogue and never
  * hides the general-purpose entries in it.
  */
-import { PACK_INDUSTRY_IDS } from "./industry-packs";
+import { PACK_INDUSTRY_IDS, packIndustryLabels } from "./industry-packs";
+import { getBuiltInIndustry } from "./built-in-industries";
 
 /** Built-in verticals. Mirrors BUILT_IN_INDUSTRY_IDS in client/src/components/industry-provider.tsx (a test keeps them equal). */
 export const BUILT_IN_INDUSTRY_IDS = [
@@ -49,6 +50,30 @@ const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
 export function industryIdAliases(id: string | null | undefined): string[] {
   if (NO_FILTER_INDUSTRY_IDS.includes(norm(id))) return [...NO_FILTER_INDUSTRY_IDS];
   return [id ?? ""];
+}
+
+/**
+ * What to call an industry in text a person will read.
+ *
+ * Industry ids are machine tokens — `financial_services`, `technology_saas`, `custom` — and they
+ * were reaching model prompts verbatim, which put them in generated prose: "in the context of
+ * custom operations", "within custom operations environments". Twenty-five ontology concepts were
+ * written that way before anyone noticed, and `custom` is the worst of the set because it reads as
+ * the ordinary English word rather than as an obviously wrong token.
+ *
+ * Falls back through built-ins, then packs, then a readable form of the id itself, so an industry
+ * nobody has registered still produces words rather than a token. The cross-industry ids get the
+ * name people actually use for that workspace, not "Custom".
+ */
+export function industryDisplayName(id: string | null | undefined): string {
+  const v = norm(id);
+  if (!v) return "enterprise";
+  if (NO_FILTER_INDUSTRY_IDS.includes(v)) return "cross-industry";
+  const builtIn = getBuiltInIndustry(v);
+  if (builtIn?.label) return builtIn.label;
+  const pack = packIndustryLabels[v];
+  if (pack) return pack;
+  return v.replace(/[_-]+/g, " ").trim() || "enterprise";
 }
 
 export function isKnownIndustry(id: string | null | undefined): boolean {
