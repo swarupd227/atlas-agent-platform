@@ -960,6 +960,11 @@ export async function runStartupMigrations() {
       ALTER TABLE eval_traces     ALTER COLUMN total_tokens DROP DEFAULT;
       ALTER TABLE eval_test_runs  ALTER COLUMN cost_usd     DROP DEFAULT;
       ALTER TABLE eval_test_runs  ALTER COLUMN total_tokens DROP DEFAULT;
+      -- The sibling table the 2026-10-19 pass missed: eval_runs carried
+      -- DEFAULT 0 on the cost columns while two of three executors never wrote
+      -- them, so a run of 25 real model calls read as free (run 68175f8e).
+      ALTER TABLE eval_runs         ALTER COLUMN avg_cost_usd DROP DEFAULT;
+      ALTER TABLE eval_case_results ALTER COLUMN cost_usd     DROP DEFAULT;
       ALTER TABLE eval_spans      ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
       ALTER TABLE eval_annotations ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
 

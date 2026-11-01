@@ -183,6 +183,24 @@ export async function runAgentOnInput(
  * not express the difference: it recorded 0.003 * metrics for every case,
  * including refused ones.
  */
+/**
+ * The average cost per case, over the cases that actually REPORTED one.
+ *
+ * Null when none did, because 0 reads as "this run was free" and that is
+ * indistinguishable from "nobody wrote a cost". Live 2026-10-28: eval run
+ * 68175f8e made 25 real Anthropic calls (1,778-2,905 characters of output
+ * each) and recorded avgCostUsd = 0, because its executor never wrote the
+ * column at all and `eval_runs.avg_cost_usd` carried DEFAULT 0 -- so the
+ * absence rendered as a measurement. Shared by all three eval executors, so
+ * the rule cannot differ between them. It already did: one invented
+ * 0.003 * metrics, one a flat 0.001 a case, one wrote nothing.
+ */
+export function averageMeasuredCost(costs: Array<number | null | undefined>): number | null {
+  const measured = costs.filter((c): c is number => typeof c === "number" && Number.isFinite(c));
+  if (measured.length === 0) return null;
+  return parseFloat((measured.reduce((a, b) => a + b, 0) / measured.length).toFixed(6));
+}
+
 export function sumUsage(items: Array<JudgeUsage | undefined>): { costUsd: number | null; tokens: number | null } {
   let costUsd: number | null = null;
   let tokens: number | null = null;

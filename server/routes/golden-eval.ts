@@ -5,6 +5,8 @@ import { checkPermission } from "../permissions";
 import { buildAgentSystemPromptWithGovernance } from "./helpers";
 import { callClaude, callClaudeWithUsage, createClaudeMessage, stripJsonFences } from "../claude";
 import { decideMany, type DecisionQuestion } from "../decision-provider";
+import { averageMeasuredCost } from "../eval-judge";
+import { priceTokens } from "../llm-provider";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Skill, Agent, EvalSuite, EvalTestCase, GoldenDataset, GoldenTestCase } from "@shared/schema";
 import { resolveReadableSkills, skillCatalogPrompt, skillToolsFor, executeBuiltinSkillTool, READ_SKILL_TOOL } from "../builtin-skill-tools";
@@ -57,6 +59,12 @@ interface JudgedCase {
   /** The answer hit EVAL_ANSWER_MAX_TOKENS and was cut off. */
   truncated?: boolean;
   latencyMs: number;
+  /**
+   * What answering this case cost, priced from the tokens the provider
+   * reported. Absent when nothing measured it -- never 0, which would read as
+   * a free run (live 2026-10-28: 25 real calls recorded avgCostUsd = 0).
+   */
+  costUsd?: number;
   /** Set when the case ran more than once (repeats > 1). */
   stability?: CaseStability;
 }
@@ -112,7 +120,7 @@ export async function answerCase(p: {
   builtinTools?: AvailableTool[];
   /** The model that answers -- evalAnswerModel(agent). */
   model?: string;
-}): Promise<{ text: string; skillsLoaded: string[]; toolsUsed: string[]; truncated: boolean }> {
+}): Promise<{ text: string; skillsLoaded: string[]; toolsUsed: string[]; truncated: boolean; costUsd: number }> {
   const offered = skillToolsFor(p.readableSkills)[0];
   const builtin = p.builtinTools ?? [];
   const toolDefs: Anthropic.Tool[] = [
@@ -124,6 +132,12 @@ export async function answerCase(p: {
   const skillsLoaded: string[] = [];
   const toolsUsed: string[] = [];
 
+  // What the answer cost, across every turn a case takes -- the agent's own
+  // spend, which nothing recorded before: avgCostUsd was never written by this
+  // path and the column defaulted to 0, so a run of 25 real calls read as free.
+  let inputTokens = 0;
+  let outputTokens = 0;
+  const model = p.model ?? EVAL_FALLBACK_MODEL;
   for (let turn = 0; turn <= MAX_SKILL_TURNS; turn++) {
     const lastTurn = turn === MAX_SKILL_TURNS;
     const response = await createClaudeMessage({
@@ -136,6 +150,8 @@ export async function answerCase(p: {
       ...(tools ? { tools, ...(lastTurn ? { tool_choice: { type: "none" } as any } : {}) } : {}),
     });
 
+    inputTokens += response.usage?.input_tokens ?? 0;
+    outputTokens += response.usage?.output_tokens ?? 0;
     const toolUses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
       const text = response.content
@@ -143,7 +159,7 @@ export async function answerCase(p: {
         .map(b => b.text)
         .join("\n")
         .trim();
-      return { text, skillsLoaded, toolsUsed, truncated: response.stop_reason === "max_tokens" };
+      return { text, skillsLoaded, toolsUsed, truncated: response.stop_reason === "max_tokens", costUsd: priceTokens(model, inputTokens, outputTokens) };
     }
 
     messages.push({ role: "assistant", content: response.content });
@@ -162,7 +178,8 @@ export async function answerCase(p: {
     }
     messages.push({ role: "user", content: results });
   }
-  return { text: "", skillsLoaded, toolsUsed, truncated: false };
+  // Out of turns: still charged for what it did spend.
+  return { text: "", skillsLoaded, toolsUsed, truncated: false, costUsd: priceTokens(model, inputTokens, outputTokens) };
 }
 
 /**
@@ -413,7 +430,7 @@ export async function judgeCase(params: {
 }): Promise<Omit<JudgedCase, "caseId" | "name" | "latencyMs">> {
   // Step 1: the agent answers, under its own real system prompt, able to load
   // its skills on demand.
-  const { text: actualOutput, skillsLoaded, toolsUsed, truncated } = await answerCase({
+  const { text: actualOutput, skillsLoaded, toolsUsed, truncated, costUsd: answerCostUsd } = await answerCase({
     systemPrompt: params.systemPrompt,
     scenario: params.scenario,
     agentId: params.agentId,
@@ -533,6 +550,10 @@ ${actualOutput}`,
     skillsLoaded,
     toolsUsed,
     truncated,
+    // What answering this case actually cost. The judge's own spend is billed
+    // through the decision provider and not visible here; this is the agent
+    // side, which is the part that was recorded as nothing at all.
+    costUsd: answerCostUsd,
   };
 }
 
@@ -738,6 +759,8 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
   // updateEvalRun, which bypasses that validation -- do not copy it.
   const passRate = cases.length > 0 ? passed / cases.length : 0;
   const avgLatencyMs = cases.length > 0 ? Math.round(judged.reduce((a, c) => a + c.latencyMs, 0) / cases.length) : 0;
+  // Measured or null, never 0: see averageMeasuredCost (server/eval-judge.ts).
+  const avgCostUsd = averageMeasuredCost(judged.map((c) => (c as { costUsd?: number }).costUsd));
   const stabilitySummary = repeats > 1 ? { repeats, stability: summarizeRun(judged.map(c => ({ caseId: c.caseId, stability: c.stability! }))) } : {};
 
   await storage.updateEvalRun(run.id, {
@@ -746,6 +769,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
     failedCases: cases.length - passed,
     passRate,
     avgLatencyMs,
+    avgCostUsd,
     completedAt: new Date(),
     resultsJson: {
       mode: "prompt_level",
@@ -1011,6 +1035,8 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
   // validation; do not copy it.
   const passRate = cases.length > 0 ? passed / cases.length : 0;
   const avgLatencyMs = cases.length > 0 ? Math.round(judged.reduce((a, c) => a + c.latencyMs, 0) / cases.length) : 0;
+  // Measured or null, never 0: see averageMeasuredCost (server/eval-judge.ts).
+  const avgCostUsd = averageMeasuredCost(judged.map((c) => (c as { costUsd?: number }).costUsd));
   // Cases with nothing to judge never ran, so they are left out of the figures.
   const stabilitySummary = repeats > 1
     ? { repeats, stability: summarizeRun(judged.filter(c => c.stability).map(c => ({ caseId: c.caseId, stability: c.stability! }))) }
@@ -1022,6 +1048,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
     failedCases: cases.length - passed,
     passRate,
     avgLatencyMs,
+    avgCostUsd,
     completedAt: new Date(),
     resultsJson: {
       mode: "prompt_level",

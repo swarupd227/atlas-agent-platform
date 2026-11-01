@@ -39,8 +39,9 @@ vi.mock("../server/auth", () => ({ getOrgId: () => "org-1" }));
 vi.mock("../server/permissions", () => ({ checkPermission: () => (_req: unknown, _res: unknown, next: () => void) => next() }));
 vi.mock("../server/routes/helpers", () => ({ buildAgentSystemPromptWithGovernance: vi.fn() }));
 
-import { answerCase, builtinToolsForEval, grantedSkillsForEval } from "../server/routes/golden-eval";
+import { answerCase, builtinToolsForEval, grantedSkillsForEval, EVAL_FALLBACK_MODEL } from "../server/routes/golden-eval";
 import { calculationToolsForSkills } from "../server/builtin-calculation-tools";
+import { priceTokens } from "../server/llm-provider";
 
 const skill = (id: string, markdownBody: string, status = "active") => ({ id, name: `Skill ${id}`, status, markdownBody } as any);
 const forecasting = skill("s-forecast", "Step 2: call loss_forecast with method=probability.");
@@ -77,7 +78,11 @@ describe("answering with a granted tool", () => {
     expect(payload.ok).toBe(true);
     expect(payload.probability).toBe(0.2);
     expect(payload.arithmetic[0]).toContain("100 / 500 = 0.2");
-    expect(r).toEqual({ text: "P = 100/500 = 0.2, 20 percent per vehicle-year.", skillsLoaded: [], toolsUsed: ["loss_forecast"], truncated: false });
+    expect(r).toEqual({
+      text: "P = 100/500 = 0.2, 20 percent per vehicle-year.",
+      skillsLoaded: [], toolsUsed: ["loss_forecast"], truncated: false,
+      costUsd: priceTokens(EVAL_FALLBACK_MODEL, 20, 20),
+    });
   });
 
   it("returns a bad input as a result the model can correct, and still counts the tool as used", async () => {

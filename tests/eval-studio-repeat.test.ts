@@ -23,7 +23,7 @@ import {
   type AttemptOutcome,
   type SettledGolden,
 } from "../server/eval-studio-repeat";
-import { sumUsage } from "../server/eval-judge";
+import { sumUsage, averageMeasuredCost } from "../server/eval-judge";
 import { pickRegressionBaseline } from "../server/eval-regression";
 
 const ok = (overall = 0.9, extra: Record<string, number> = {}): AttemptOutcome => ({
@@ -342,5 +342,46 @@ describe("a run reports what it evaluated, not what it was asked to", () => {
     // An agent that ran and produced nothing is NOT a refusal.
     const worker = readFileSync(join(__dirname, "..", "server", "worker.ts"), "utf8");
     expect(worker).toContain("agentRefused = rt.refused === true;");
+  });
+});
+
+/**
+ * Three eval executors, three different wrong answers about cost: worker.ts
+ * invented 0.003 * metrics a case, agents.ts a flat 0.001, and golden-eval.ts
+ * never wrote the column at all -- which, with eval_runs.avg_cost_usd carrying
+ * DEFAULT 0, made run 68175f8e report avgCostUsd = 0 after 25 real Anthropic
+ * calls (2026-10-28, found by the Insurity session). One rule, in one place.
+ */
+describe("averaging a partly-measured cost", () => {
+  it("averages only the cases that reported one", () => {
+    expect(averageMeasuredCost([0.004, undefined, 0.002])).toBeCloseTo(0.003, 6);
+    expect(averageMeasuredCost([0.01, null, null])).toBeCloseTo(0.01, 6);
+  });
+
+  it("is null when nothing was measured, and 0 only when a provider said 0", () => {
+    expect(averageMeasuredCost([])).toBeNull();
+    expect(averageMeasuredCost([null, undefined])).toBeNull();
+    // A real zero is a measurement and is kept, which is the whole distinction.
+    expect(averageMeasuredCost([0, 0])).toBe(0);
+  });
+
+  it("ignores a non-finite value rather than poisoning the average", () => {
+    expect(averageMeasuredCost([0.004, NaN, Infinity, 0.002])).toBeCloseTo(0.003, 6);
+  });
+
+  it("no eval executor invents a cost any more", () => {
+    const golden = readFileSync(join(__dirname, "..", "server", "routes", "golden-eval.ts"), "utf8");
+    const agents = readFileSync(join(__dirname, "..", "server", "routes", "agents.ts"), "utf8");
+    const worker = readFileSync(join(__dirname, "..", "server", "worker.ts"), "utf8");
+    // the flat per-case figures, each from a different executor
+    expect(agents, "the flat 0.001 a case is back").not.toMatch(/costUsd\s*=\s*0\.001/);
+    expect(worker, "the per-metric constant is back").not.toMatch(/const estimatedCostUsd\s*=\s*0\.003/);
+    // and each one now writes what it measured, or null
+    expect(golden).toContain("averageMeasuredCost(judged.map");
+    expect(golden).toContain("avgCostUsd,");
+    expect(agents).toContain("averageMeasuredCost(caseCosts)");
+    // the default that turned an omission into a measurement
+    const schema = readFileSync(join(__dirname, "..", "shared", "schema.ts"), "utf8");
+    expect(schema, "avg_cost_usd DEFAULT 0 is back").not.toContain('avgCostUsd: real("avg_cost_usd").default(0)');
   });
 });

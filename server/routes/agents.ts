@@ -61,7 +61,8 @@ import {
   checkOntologyCompliance,
   canonicalJsonStringify,
 } from "../agent-runtime";
-import { callClaude, stripJsonFences } from "../claude";
+import { callClaudeWithUsage, stripJsonFences } from "../claude";
+import { averageMeasuredCost } from "../eval-judge";
 
 const router = Router();
 
@@ -1764,7 +1765,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId as string, getOrgId(req));
+      const trace = await storage.getTrace(req.params.traceId as string);
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       let integrityStatus: any = { valid: false, checks: {} };
@@ -1814,7 +1815,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/reconstruct", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId as string, getOrgId(req));
+      const trace = await storage.getTrace(req.params.traceId as string);
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const snapshot = (trace.provenanceSnapshot || {}) as any;
@@ -1959,7 +1960,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/diff", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId as string, getOrgId(req));
+      const trace = await storage.getTrace(req.params.traceId as string);
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const snapshot = (trace.provenanceSnapshot || {}) as any;
@@ -2059,7 +2060,7 @@ const router = Router();
       if (traceIds && Array.isArray(traceIds) && traceIds.length > 0) {
         traces = [];
         for (const tid of traceIds) {
-          const t = await storage.getTrace(tid, getOrgId(req));
+          const t = await storage.getTrace(tid);
           if (t) traces.push(t);
         }
       } else {
@@ -2115,7 +2116,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/export", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId as string, getOrgId(req));
+      const trace = await storage.getTrace(req.params.traceId as string);
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const format = (req.query.format as string) || "generic";
@@ -2255,7 +2256,7 @@ const router = Router();
       if (traceIds && Array.isArray(traceIds) && traceIds.length > 0) {
         traces = [];
         for (const tid of traceIds) {
-          const t = await storage.getTrace(tid, getOrgId(req));
+          const t = await storage.getTrace(tid);
           if (t) traces.push(t);
         }
       } else {
@@ -3042,7 +3043,12 @@ const router = Router();
       let passedCount = 0;
       let failedCount = 0;
       let totalLatencyMs = 0;
-      let totalCostUsd = 0;
+      // Per-case costs, kept as a list so "nobody measured" stays different
+      // from "it was free" (averageMeasuredCost, server/eval-judge.ts). This
+      // runner used to add a flat 0.001 per case, which is a number nothing
+      // spent -- one of three eval executors that each invented or omitted a
+      // cost in its own way.
+      const caseCosts: Array<number | null> = [];
 
       for (const tc of testCases) {
         const caseStart = Date.now();
@@ -3050,7 +3056,7 @@ const router = Router();
         let passed = false;
         let failingStep: string | null = null;
         let failingReason: string | null = null;
-        let costUsd = 0;
+        let costUsd: number | null = null;
 
         try {
           const evalPrompt = `You are evaluating a skill called "${skill.name}" (domain: ${skill.domain || "general"}, industry: ${skill.industry || "general"}).
@@ -3073,14 +3079,17 @@ Respond in JSON format:
   "qualityScore": 0.0 to 1.0
 }`;
 
-          const rawContent = await callClaude({
+          const judged = await callClaudeWithUsage({
             system: "",
             user: evalPrompt,
             model: "claude-haiku-4-5",
             maxTokens: 1024,
             jsonMode: true,
           });
-          costUsd = 0.001;
+          const rawContent = judged.text;
+          // Priced from the tokens the provider reported, by the same table the
+          // rest of the platform uses.
+          costUsd = judged.costUsd;
 
           try {
             actualOutput = JSON.parse(stripJsonFences(rawContent));
@@ -3101,7 +3110,7 @@ Respond in JSON format:
 
         const latencyMs = Date.now() - caseStart;
         totalLatencyMs += latencyMs;
-        totalCostUsd += costUsd;
+        caseCosts.push(costUsd);
         if (passed) passedCount++; else failedCount++;
 
         await storage.createEvalCaseResult({
@@ -3112,13 +3121,15 @@ Respond in JSON format:
           failingStep,
           failingReason,
           latencyMs,
-          costUsd: parseFloat(costUsd.toFixed(6)),
+          // Null when the call never reported usage: a 0 here is indistinguishable
+          // from a case that cost nothing.
+          costUsd: costUsd === null ? null : parseFloat(costUsd.toFixed(6)),
         });
       }
 
       const passRate = totalCases > 0 ? parseFloat((passedCount / totalCases * 100).toFixed(1)) : 0;
       const avgLatencyMs = totalCases > 0 ? Math.round(totalLatencyMs / totalCases) : 0;
-      const avgCostUsd = totalCases > 0 ? parseFloat((totalCostUsd / totalCases).toFixed(6)) : 0;
+      const avgCostUsd = averageMeasuredCost(caseCosts);
 
       await storage.updateEvalRun(run.id, {
         status: "completed",

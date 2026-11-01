@@ -963,7 +963,9 @@ export const evalRuns = pgTable("eval_runs", {
   failedCases: integer("failed_cases").default(0),
   passRate: real("pass_rate").default(0),
   avgLatencyMs: integer("avg_latency_ms").default(0),
-  avgCostUsd: real("avg_cost_usd").default(0),
+  /** What the run cost, averaged over the cases that REPORTED a cost. Null
+   *  means not measured; it must never be 0, which reads as a free run. */
+  avgCostUsd: real("avg_cost_usd"),
   resultsJson: jsonb("results_json"),
   triggeredBy: text("triggered_by").default("manual"),
   environment: text("environment").default("staging"),
