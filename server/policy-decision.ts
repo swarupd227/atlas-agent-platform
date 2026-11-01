@@ -351,6 +351,10 @@ export async function decide(req: PdpRequest, deps: PdpDeps = defaultPdpDeps, op
     if (exempt) {
       if (deniedTools.includes(toolName)) {
         const reason = `Tool '${toolName}' is in the denied tools list`;
+        audit({
+          actorType: "system", actorId: "aar-gate", action: "tool_blocked_aar", objectType: "agent", objectId: agentId,
+          details: JSON.stringify({ toolName, serverName: tool.serverName, reason, iteration: ctx.iteration, traceId: ctx.traceId }),
+        });
         return done({ decision: "BLOCK", gate: "aar_list", outcome: "gate_blocked_aar", reason, aarDecision: "BLOCK" });
       }
     } else {
@@ -413,6 +417,10 @@ export async function decide(req: PdpRequest, deps: PdpDeps = defaultPdpDeps, op
       rulesTriggered.push(...aarRules);
 
       if (decision === "BLOCK") {
+        audit({
+          actorType: "system", actorId: "aar-gate", action: "tool_blocked_aar", objectType: "agent", objectId: agentId,
+          details: JSON.stringify({ toolName, serverName: tool.serverName, reason, iteration: ctx.iteration, traceId: ctx.traceId }),
+        });
         return done({ decision, gate: "aar_list", outcome: "gate_blocked_aar", reason, aarDecision: decision });
       }
       if (decision === "REQUIRE_APPROVAL" && !humanApproved) {
@@ -436,6 +444,10 @@ export async function decide(req: PdpRequest, deps: PdpDeps = defaultPdpDeps, op
           const reason = warrant
             ? `Task class "${tc.name}" warrant denies tool "${toolName}"`
             : `No active warrant grants task class "${tc.name}" (tool "${toolName}") -- authority has expired or was never issued`;
+          audit({
+            actorType: "system", actorId: "warrant-gate", action: "tool_blocked_warrant", objectType: "agent", objectId: agentId,
+            details: JSON.stringify({ toolName, serverName: tool.serverName, reason, iteration: ctx.iteration, traceId: ctx.traceId }),
+          });
           return done({ decision: "BLOCK", gate: "warrant", outcome: "gate_blocked_warrant", reason, warrantDecision: "BLOCK", humanApproved });
         }
         if (warrant.grants === "requires_approval") {

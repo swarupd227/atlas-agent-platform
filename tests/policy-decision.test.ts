@@ -179,6 +179,40 @@ describe("mapping and effects", () => {
     expect(m.createAuditEvent.mock.calls[0][0]).toMatchObject({ action: "tool_blocked_pdp_error", organizationId: "org-1" });
   });
 
+  it("an AAR block writes one audit event with the organization and the reason", async () => {
+    m.getAarConfig.mockResolvedValue({ allowedTools: [], deniedTools: ["create_ticket"], requireApprovalTools: [] });
+    const d = await enforce(req());
+    expect(d.outcome).toBe("gate_blocked_aar");
+    expect(m.createAuditEvent).toHaveBeenCalledTimes(1);
+    const e = m.createAuditEvent.mock.calls[0][0];
+    expect(e).toMatchObject({ action: "tool_blocked_aar", actorId: "aar-gate", objectId: "agent-1", organizationId: "org-1" });
+    expect(JSON.parse(e.details).reason).toBe(d.reason);
+  });
+
+  it("an AAR allow-list miss and a deny on a built-in read are audited the same way", async () => {
+    m.getAarConfig.mockResolvedValue({ allowedTools: ["other_tool"], deniedTools: [], requireApprovalTools: [] });
+    await enforce(req());
+    m.getAarConfig.mockResolvedValue({ allowedTools: [], deniedTools: ["read_skill"], requireApprovalTools: [] });
+    await enforce(req({}, SKILL_READ));
+    expect(m.createAuditEvent.mock.calls.map((c: any[]) => c[0].action)).toEqual(["tool_blocked_aar", "tool_blocked_aar"]);
+  });
+
+  it("a warrant block writes one audit event with the organization and the reason", async () => {
+    m.listAgentTaskClasses.mockResolvedValue([{ id: "tc-1", name: "Claims", coveredTools: ["create_ticket"] }]);
+    m.getActiveWarrant.mockResolvedValue(null);
+    const d = await enforce(req());
+    expect(d.outcome).toBe("gate_blocked_warrant");
+    expect(m.createAuditEvent).toHaveBeenCalledTimes(1);
+    const e = m.createAuditEvent.mock.calls[0][0];
+    expect(e).toMatchObject({ action: "tool_blocked_warrant", actorId: "warrant-gate", objectId: "agent-1", organizationId: "org-1" });
+    expect(JSON.parse(e.details).reason).toBe(d.reason);
+  });
+
+  it("a call that passes the AAR and warrant gates writes no audit event", async () => {
+    await enforce(req());
+    expect(m.createAuditEvent).not.toHaveBeenCalled();
+  });
+
   it("applyEffects files the approval and links the AAR row to it", async () => {
     m.getAarConfig.mockResolvedValue({ allowedTools: [], deniedTools: [], requireApprovalTools: ["create_ticket"] });
     const d = await decide(req());

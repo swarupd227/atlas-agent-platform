@@ -1216,6 +1216,15 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
     ? await skillReadAarDecision(agentId, tool.toolName)
     : await evaluateActionPolicy(agentId, tool);
   if (aar.decision === "BLOCK") {
+    storage.createAuditEvent({
+      organizationId: req.orgId ?? undefined,
+      actorType: "system",
+      actorId: "aar-gate",
+      action: "tool_blocked_aar",
+      objectType: "agent",
+      objectId: agentId,
+      details: JSON.stringify({ toolName: tool.toolName, serverName: tool.serverName, reason: aar.reason, iteration: req.iteration, traceId: req.traceId }),
+    }).catch(() => {});
     return finish({ outcome: "gate_blocked_aar", ok: false, result: null, error: aar.reason, reason: aar.reason, aarDecision: aar.decision, monitorFlagged });
   }
   if (aar.decision === "REQUIRE_APPROVAL") {
@@ -1245,6 +1254,15 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
     ? { decision: "ALLOW", reason: "Built-in skill read or memory proposal -- warrant gate not engaged" }
     : await evaluateWarrantCondition(agentId, tool)) as Awaited<ReturnType<typeof evaluateWarrantCondition>>;
   if (warrant.decision === "BLOCK") {
+    storage.createAuditEvent({
+      organizationId: req.orgId ?? undefined,
+      actorType: "system",
+      actorId: "warrant-gate",
+      action: "tool_blocked_warrant",
+      objectType: "agent",
+      objectId: agentId,
+      details: JSON.stringify({ toolName: tool.toolName, serverName: tool.serverName, reason: warrant.reason, iteration: req.iteration, traceId: req.traceId }),
+    }).catch(() => {});
     return finish({ outcome: "gate_blocked_warrant", ok: false, result: null, error: warrant.reason, reason: warrant.reason, warrantDecision: warrant.decision, monitorFlagged });
   }
   if (warrant.decision === "REQUIRE_APPROVAL") {

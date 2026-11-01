@@ -65,7 +65,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool 'create_ticket' is not in the allowed tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
@@ -130,7 +146,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool 'create_ticket' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
@@ -1325,7 +1357,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "read_attachment",
+            "serverName": "builtin:attachments",
+            "reason": "Tool 'read_attachment' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [],
       "approvalRiskShadow": [],
@@ -1470,7 +1518,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "search_history",
+            "serverName": "builtin:history",
+            "reason": "Tool 'search_history' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [],
       "approvalRiskShadow": [],
@@ -1615,7 +1679,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "propose_memory",
+            "serverName": "builtin:memory",
+            "reason": "Tool 'propose_memory' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [],
       "approvalRiskShadow": [],
@@ -1770,7 +1850,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "propose_ontology_concept",
+            "serverName": "builtin:ontology-proposals",
+            "reason": "Tool 'propose_ontology_concept' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [],
       "approvalRiskShadow": [],
@@ -1925,7 +2021,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "propose_skill",
+            "serverName": "builtin:skill-proposals",
+            "reason": "Tool 'propose_skill' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [],
       "approvalRiskShadow": [],
@@ -2080,7 +2192,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "read_skill",
+            "serverName": "builtin:skills",
+            "reason": "Tool 'read_skill' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [],
       "approvalRiskShadow": [],
@@ -2415,7 +2543,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool 'create_ticket' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
@@ -2467,7 +2611,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool 'create_ticket' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
@@ -2584,7 +2744,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_warrant",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "warrant-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
@@ -2701,7 +2877,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool 'create_ticket' is not in the allowed tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
@@ -2919,6 +3111,21 @@
           "objectType": "tool",
           "objectId": "create_ticket",
           "details": "Tool \"create_ticket\" required approval and was human-approved (approvalId=appr-human) for agent agent-1."
+        },
+        {
+          "action": "tool_blocked_warrant",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "warrant-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
         }
       ],
       "approvals": [
@@ -3044,6 +3251,21 @@
             "serverName": "Ticketing",
             "enforcementMode": "monitor",
             "iteration": 1
+          }
+        },
+        {
+          "action": "tool_blocked_aar",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "aar-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Tool 'create_ticket' is in the denied tools list",
+            "iteration": 1,
+            "traceId": "trace-1"
           }
         }
       ],
@@ -3923,7 +4145,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_warrant",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "warrant-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Task class \"Claims Handling\" warrant denies tool \"create_ticket\"",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
@@ -4046,7 +4284,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_warrant",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "warrant-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "No active warrant grants task class \"Claims Handling\" (tool \"create_ticket\") -- authority has expired or was never issued",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
@@ -4322,7 +4576,23 @@
     "threw": null,
     "executed": false,
     "effects": {
-      "auditEvents": [],
+      "auditEvents": [
+        {
+          "action": "tool_blocked_warrant",
+          "organizationId": "org-1",
+          "actorType": "system",
+          "actorId": "warrant-gate",
+          "objectType": "agent",
+          "objectId": "agent-1",
+          "details": {
+            "toolName": "create_ticket",
+            "serverName": "Ticketing",
+            "reason": "Task class \"Fraud Review\" warrant denies tool \"create_ticket\"",
+            "iteration": 1,
+            "traceId": "trace-1"
+          }
+        }
+      ],
       "approvals": [],
       "aarActionDecisions": [
         {
