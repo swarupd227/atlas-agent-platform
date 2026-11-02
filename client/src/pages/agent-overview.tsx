@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { QueryBoundary } from "@/components/ui-vocab";
 import { usePermission } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
@@ -848,15 +849,39 @@ function SkillProposals({ agent, canEdit, toast }: { agent: Agent; canEdit: bool
 function Rules({ agent }: { agent: Agent }) {
   const resolvedQ = useQuery<ResolvedPolicies>({ queryKey: [`/api/policies/resolve/${agent.id}`] });
   const exceptionsQ = useQuery<PolicyException[]>({ queryKey: [`/api/policy-exceptions/agent/${agent.id}`] });
+  const pendingQ = useQuery<Array<{ id: string; description: string | null; requestedBy: string | null; createdAt: string | null }>>({
+    queryKey: [`/api/agents/${agent.id}/policy-changes`],
+  });
+  const canEdit = usePermission("create_modify_blueprints").allowed;
+  const [editing, setEditing] = useState(false);
   const policies = policiesByScope(resolvedQ.data);
   const blocked = resolvedQ.data?.enforcement?.blockedTools ?? [];
   const monitored = resolvedQ.data?.enforcement?.monitoredTools ?? [];
   const exceptions = exceptionsQ.data ?? [];
+  const pending = pendingQ.data ?? [];
 
   return (
     <div className="flex flex-col gap-6">
       <section>
-        <SectionHeading>Policies in force</SectionHeading>
+        <div className="flex items-center justify-between gap-2">
+          <SectionHeading>Policies in force</SectionHeading>
+          {canEdit && (
+            <Button size="sm" variant="outline" className="mb-2 h-7 text-xs" onClick={() => setEditing(true)} data-testid="button-edit-policies">
+              Edit policies
+            </Button>
+          )}
+        </div>
+        {pending.length > 0 && (
+          <ul className="mb-2 flex flex-col gap-1" data-testid="pending-policy-changes">
+            {pending.map((p) => (
+              <li key={p.id} className="rounded border border-amber-500/40 bg-amber-500/5 p-2 text-xs">
+                <span className="font-medium">Waiting for approval:</span> {p.description}
+                <Link href="/approvals" className="ml-1 underline">Approvals</Link>
+              </li>
+            ))}
+          </ul>
+        )}
+        {editing && <EditPoliciesDialog agent={agent} onClose={() => setEditing(false)} />}
         {resolvedQ.isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : policies.length === 0 ? (
@@ -899,6 +924,174 @@ function Rules({ agent }: { agent: Agent }) {
         <p className="mt-1 text-[11px] text-muted-foreground">An approved exception is recorded; the runtime doesn't read exceptions yet.</p>
       </section>
     </div>
+  );
+}
+
+/** Advisory < soft/monitor < hard/strict/block -- the order server/agent-policy-changes.ts uses. */
+function enforcementRank(e: string | null | undefined): number {
+  const v = (e ?? "").toLowerCase();
+  return v === "advisory" ? 0 : v === "hard" || v === "strict" || v === "block" ? 2 : 1;
+}
+
+type DraftBinding = { policyId: string; name: string; enforcement: string; original: string | null; removed: boolean };
+
+/**
+ * Edit the policies chosen for this agent (its bindings). Adding or tightening
+ * applies at once; removing or loosening needs a reason and goes to an approval
+ * (POST /api/agents/:id/policy-changes). Organization, outcome and environment
+ * policies are not bindings: they are changed on the policy, in Governance.
+ */
+function EditPoliciesDialog({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const { toast } = useToast();
+  const libraryQ = useQuery<Policy[]>({ queryKey: ["/api/policies"], staleTime: 0, refetchOnMount: "always" });
+  const library = libraryQ.data ?? [];
+  const [draft, setDraft] = useState<DraftBinding[] | null>(null);
+  const [search, setSearch] = useState("");
+  const [reason, setReason] = useState("");
+
+  // The agent's bindings, by id -- a demo binding names its policy instead, so match it by name.
+  const initial = useMemo<DraftBinding[]>(() => {
+    const raw = (Array.isArray(agent.policyBindings) ? agent.policyBindings : []) as Array<{ policyId?: string; policyName?: string; enforcement?: string }>;
+    return raw.flatMap((b) => {
+      const p = library.find((x) => x.id === b.policyId) ?? library.find((x) => !b.policyId && x.name === b.policyName);
+      if (!p) return [];
+      const enforcement = b.enforcement ?? "soft";
+      return [{ policyId: p.id, name: p.name, enforcement, original: enforcement, removed: false }];
+    });
+  }, [agent.policyBindings, library]);
+  const rows = draft ?? initial;
+  const update = (next: DraftBinding[]) => setDraft(next);
+
+  const changes = rows.flatMap((r): Array<{ policyId: string; action: "add" | "remove" | "set_enforcement"; enforcement?: string }> => {
+    if (r.original === null) return r.removed ? [] : [{ policyId: r.policyId, action: "add", enforcement: r.enforcement }];
+    if (r.removed) return [{ policyId: r.policyId, action: "remove" }];
+    if (r.enforcement !== r.original) return [{ policyId: r.policyId, action: "set_enforcement", enforcement: r.enforcement }];
+    return [];
+  });
+  const looser = rows.filter((r) => r.original !== null && (r.removed || enforcementRank(r.enforcement) < enforcementRank(r.original)));
+  const needsReason = looser.length > 0 && !reason.trim();
+
+  const bound = new Set(rows.map((r) => r.policyId));
+  const q = search.trim().toLowerCase();
+  const addable = library
+    .filter((p) => p.status === "active" && !bound.has(p.id))
+    .filter((p) => !q || p.name.toLowerCase().includes(q) || (p.domain ?? "").toLowerCase().includes(q))
+    .slice(0, 30);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/policy-changes`, { changes, reason: reason.trim() || undefined });
+      return res.json() as Promise<{ applied: unknown[]; pending: { approvalId: string } | null }>;
+    },
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/policies/resolve/${agent.id}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/agents/${agent.id}/policy-changes`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/agents/${agent.id}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      toast({
+        title: "Policies updated",
+        description: [
+          r.applied.length ? `${r.applied.length} change${r.applied.length === 1 ? "" : "s"} applied now.` : "",
+          r.pending ? "Removing or loosening is waiting for approval in Approvals." : "",
+        ].filter(Boolean).join(" "),
+      });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Policies not changed", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit policies for {agent.name}</DialogTitle>
+          <DialogDescription>
+            Adding a policy or making one stricter applies on the next run. Removing one or making it looser needs a reason and an approval from compliance.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-2">
+          <h4 className="text-xs font-medium">Chosen for this agent</h4>
+          {libraryQ.isLoading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No policy is chosen for this agent.</p>
+          ) : (
+            <ul className="flex flex-col gap-1" data-testid="edit-policy-rows">
+              {rows.map((r, i) => {
+                const loosened = r.original !== null && !r.removed && enforcementRank(r.enforcement) < enforcementRank(r.original);
+                return (
+                  <li key={r.policyId} className={`flex items-center gap-2 rounded border p-2 text-xs ${r.removed ? "opacity-60" : ""}`}>
+                    <span className={`min-w-0 flex-1 truncate ${r.removed ? "line-through" : ""}`}>{r.name}</span>
+                    {r.original === null && <Badge variant="secondary" className="text-[9px]">new</Badge>}
+                    {(r.removed || loosened) && <Badge variant="outline" className="border-amber-500 text-[9px] text-amber-600">needs approval</Badge>}
+                    <select
+                      value={r.enforcement}
+                      disabled={r.removed}
+                      onChange={(e) => update(rows.map((x, j) => (j === i ? { ...x, enforcement: e.target.value } : x)))}
+                      className="h-7 rounded border bg-background px-1 text-xs"
+                      data-testid={`select-policy-enforcement-${i}`}
+                    >
+                      <option value="hard">Hard</option>
+                      <option value="soft">Soft</option>
+                      <option value="advisory">Advisory</option>
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => update(r.original === null ? rows.filter((_, j) => j !== i) : rows.map((x, j) => (j === i ? { ...x, removed: !x.removed } : x)))}
+                      data-testid={`button-toggle-remove-policy-${i}`}
+                    >
+                      {r.removed ? "Undo" : "Remove"}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <h4 className="mt-2 text-xs font-medium">Add from the library</h4>
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search policies by name or domain" className="h-8 text-xs" data-testid="input-search-add-policy" />
+          <ScrollArea className="max-h-40 rounded border">
+            <ul className="flex flex-col">
+              {addable.length === 0 ? (
+                <li className="p-2 text-xs text-muted-foreground">No other active policies match.</li>
+              ) : addable.map((p) => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 p-2 text-left text-xs hover-elevate"
+                    onClick={() => update([...rows, { policyId: p.id, name: p.name, enforcement: "soft", original: null, removed: false }])}
+                    data-testid={`button-add-policy-${p.id}`}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">{p.domain}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </ScrollArea>
+
+          {looser.length > 0 && (
+            <div className="mt-2 flex flex-col gap-1">
+              <label className="text-xs font-medium" htmlFor="policy-change-reason">Why remove or loosen {looser.length === 1 ? "this policy" : "these policies"}?</label>
+              <Textarea id="policy-change-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="The approver sees this reason." className="min-h-[60px] text-xs" data-testid="input-policy-change-reason" />
+            </div>
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            Policies that apply to every agent in the organization, an outcome or an environment are not chosen here; change them in Governance.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={changes.length === 0 || needsReason || save.isPending} data-testid="button-save-policy-changes">
+            {save.isPending ? "Saving…" : looser.length > 0 ? "Save and request approval" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -83,6 +83,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { packWizardPresets, packWizardContexts } from "@shared/industry-packs";
 import { suitePassPercent } from "@shared/eval-threshold";
+import { recommendPolicies } from "@shared/policy-recommendations";
+import { checkPolicyRequirements, policyMeetsRequirement, policyRequirementsFor } from "@shared/policy-requirements";
 import { NOT_MEASURED } from "@/lib/measured";
 import { watchJobStatus, type JobStatusSnapshot } from "@/lib/job-status-watch";
 
@@ -1674,6 +1676,13 @@ export default function AgentWizard() {
       guardrailsConfig: wizardState.guardrailsConfig,
       evalSuiteConfig: wizardState.evalSuiteConfig,
       ontologyTags: wizardState.ontologyTags.length > 0 ? wizardState.ontologyTags : undefined,
+      // Save the industry chosen in this wizard: the agent runs with it
+      // (server/agent-industry.ts) instead of falling back to the organization's.
+      // "custom" names no industry.
+      industryId: wizardState.industryId && wizardState.industryId !== "custom" ? wizardState.industryId : undefined,
+      // No policy attaches by default: the agent is held only to the policies
+      // chosen in this wizard (policyBindings). The wizard recommends; the person decides.
+      policySelection: "explicit",
       systemPrompt: composedSystemPrompt,
       department: wizardState.department || undefined,
       rolloutConfig: wizardState.rolloutConfig,
@@ -5166,18 +5175,54 @@ function Step3IndustryGovernance({
     name: string;
     domain: string;
     description: string;
+    status?: string | null;
+    policyJson?: unknown;
   }>>({
     queryKey: ["/api/policies"],
+    // Fresh on every visit: a policy created in Governance (the "Required for"
+    // card links there in a new tab) must show up here without a full reload.
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
-  function togglePolicy(policyId: string) {
-    const current = state.guardrailsConfig.policyBundleIds;
-    const updated = current.includes(policyId)
-      ? current.filter((id) => id !== policyId)
-      : [...current, policyId];
-    updateState({
-      guardrailsConfig: { ...state.guardrailsConfig, policyBundleIds: updated },
-    });
+  const { industry } = useIndustry();
+  const industryCtx = industry && industry.id !== "custom" ? INDUSTRY_CONTEXT_CONFIG[industry.id] : null;
+  const chosenIndustryId = state.industryId || industry?.id || null;
+  const recommendations = recommendPolicies(
+    chosenIndustryId,
+    policies ?? [],
+    industry && industry.id === chosenIndustryId ? industry.label : undefined,
+  );
+  const boundPolicyIds = new Set(state.policyBindings.map((b) => b.policyId));
+
+  // Every policy the industry requires -- the same list, industry and matching rule
+  // the Review step checks -- with the library policies that can cover each, so a
+  // requirement Review reports as missing can always be found and chosen here.
+  const requiredIndustryId = state.industryId && state.industryId !== "cross_industry" && state.industryId !== "custom" ? state.industryId : null;
+  const requiredIndustryLabel = industry && industry.id === requiredIndustryId ? industry.label : requiredIndustryId;
+  const requiredItems = requiredIndustryId
+    ? policyRequirementsFor(requiredIndustryId).map((requirement) => ({
+        requirement,
+        candidates: (policies ?? []).filter(
+          (p) => (!p.status || p.status === "active") && policyMeetsRequirement({ name: p.name, description: p.description, domain: p.domain }, requirement),
+        ),
+      }))
+    : [];
+
+  // A recommendation is only attached when the person adds it, as a policy binding
+  // (the same list the "Policy Bindings" card below edits).
+  function toggleRecommended(policy: { id: string; name: string; domain: string; description: string }) {
+    if (boundPolicyIds.has(policy.id)) {
+      updateState({ policyBindings: state.policyBindings.filter((b) => b.policyId !== policy.id) });
+    } else {
+      updateState({
+        policyBindings: [
+          ...state.policyBindings,
+          { policyId: policy.id, policyName: policy.name, enforcement: "soft", domain: policy.domain, description: policy.description },
+        ],
+      });
+    }
   }
 
   function addItem(field: keyof typeof state.guardrailsConfig, val: string) {
@@ -5194,9 +5239,6 @@ function Step3IndustryGovernance({
     });
   }
 
-  const { industry } = useIndustry();
-  const industryCtx = industry && industry.id !== "custom" ? INDUSTRY_CONTEXT_CONFIG[industry.id] : null;
-
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
       <div className="flex items-center gap-2">
@@ -5204,7 +5246,7 @@ function Step3IndustryGovernance({
         <h2 className="text-lg font-medium">Industry Governance</h2>
       </div>
       <p className="text-sm text-muted-foreground">
-        Pre-populated safety policies, compliance prerequisites, and content filters based on your industry context.
+        No policy is attached automatically. This agent follows only the policies you add here. Recommendations are based on your industry.
       </p>
 
       {industryCtx && (
@@ -5243,10 +5285,74 @@ function Step3IndustryGovernance({
         </>
       )}
 
-      <Card>
+      {requiredItems.length > 0 && (
+        <Card data-testid="card-required-policies">
+          <CardHeader className="flex flex-row items-center gap-2 pb-3">
+            <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Required for {requiredIndustryLabel}</CardTitle>
+            <Badge variant="outline" className="text-[10px]">
+              {requiredItems.filter(({ candidates }) => candidates.some((p) => boundPolicyIds.has(p.id))).length}/{requiredItems.length} chosen
+            </Badge>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {requiredItems.map(({ requirement, candidates }, i) => {
+              const covered = candidates.some((p) => boundPolicyIds.has(p.id));
+              return (
+                <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md border" data-testid={`required-policy-${i}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {covered ? (
+                      <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    )}
+                    <span className="text-sm font-medium">{requirement.regulation}</span>
+                    <Badge variant="outline" className="text-[9px]">{requirement.domain}</Badge>
+                    <span className="text-xs text-muted-foreground">{requirement.description}</span>
+                  </div>
+                  {candidates.length === 0 ? (
+                    <p className="text-xs text-muted-foreground pl-5">
+                      No policy in your library covers this yet. A {requirement.domain} policy with "{requirement.regulation}" in its name would.{" "}
+                      <a href="/governance" target="_blank" rel="noopener noreferrer" className="underline" data-testid={`link-create-required-policy-${i}`}>
+                        Create one in Governance
+                      </a>
+                      , then come back to this step.
+                    </p>
+                  ) : (
+                    candidates.map((p) => {
+                      const isSelected = boundPolicyIds.has(p.id);
+                      return (
+                        <div
+                          key={p.id}
+                          className={`flex items-center gap-2 ml-5 p-2 rounded-md cursor-pointer transition-colors ${
+                            isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "bg-muted/30 hover-elevate"
+                          }`}
+                          onClick={() => toggleRecommended(p)}
+                          data-testid={`toggle-required-policy-${i}-${p.id}`}
+                        >
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                            isSelected ? "bg-primary border-primary" : "border-border"
+                          }`}>
+                            {isSelected && <Check className="w-3 h-3 text-primary-foreground" />}
+                          </div>
+                          <span className="text-xs">{p.name}</span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      <Card data-testid="card-recommended-policies">
         <CardHeader className="flex flex-row items-center gap-2 pb-3">
           <ListChecks className="w-4 h-4 text-muted-foreground" />
-          <CardTitle className="text-sm font-medium">Policy Bundles</CardTitle>
+          <CardTitle className="text-sm font-medium">Recommended Policies</CardTitle>
+          {recommendations.length > 0 && (
+            <Badge variant="secondary" className="text-[10px]">{recommendations.length}</Badge>
+          )}
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           {policiesLoading && (
@@ -5254,18 +5360,20 @@ function Step3IndustryGovernance({
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
             </div>
           )}
-          {!policiesLoading && (!policies || policies.length === 0) && (
-            <p className="text-sm text-muted-foreground text-center py-4">No policies available.</p>
+          {!policiesLoading && recommendations.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No library policies are recommended for this industry. Add policies from the library under Policy Bindings below.
+            </p>
           )}
-          {policies?.map((policy) => {
-            const isSelected = state.guardrailsConfig.policyBundleIds.includes(policy.id);
+          {recommendations.map(({ policy, reasons }) => {
+            const isSelected = boundPolicyIds.has(policy.id);
             return (
               <div
                 key={policy.id}
                 className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors ${
                   isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "bg-muted/30 hover-elevate"
                 }`}
-                onClick={() => togglePolicy(policy.id)}
+                onClick={() => toggleRecommended(policy)}
                 data-testid={`toggle-policy-${policy.id}`}
               >
                 <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
@@ -5279,6 +5387,7 @@ function Step3IndustryGovernance({
                     <Badge variant="outline" className="text-[10px]">{policy.domain}</Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{policy.description}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Recommended: {reasons.join(" · ")}</p>
                 </div>
               </div>
             );
@@ -6181,20 +6290,24 @@ function StepReview({
     queryKey: ["/api/skills"],
   });
 
-  const { data: designTimeCheck, isLoading: designTimeLoading } = useQuery<DesignTimeCheckResult>({
-    queryKey: ["/api/governance/design-time-check", state.industryId, state.riskTier],
-    queryFn: async () => {
-      if (!state.industryId || state.industryId === "cross_industry") {
-        return { passed: true, requirements: [] };
-      }
-      const resp = await apiRequest("POST", "/api/governance/design-time-check", {
-        industryId: state.industryId,
-        riskTier: state.riskTier,
-      });
-      return resp.json();
-    },
-    enabled: !!state.industryId && state.industryId !== "cross_industry",
+  // The industry's required policies, checked against the policies CHOSEN for this
+  // agent in the Industry Governance step -- not the whole library. A new agent is
+  // held only to what is chosen (policySelection "explicit"), so a policy that sits
+  // in the library but was not chosen does not cover anything. Each "missing" item
+  // here is listed, with what can satisfy it, under "Required for" in that step.
+  const { data: libraryPolicies, isLoading: designTimeLoading } = useQuery<Array<{ id: string; name: string; domain: string; description: string | null; status?: string | null }>>({
+    queryKey: ["/api/policies"],
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
+  const designTimeCheck = useMemo<DesignTimeCheckResult | undefined>(() => {
+    if (!state.industryId || state.industryId === "cross_industry") return { passed: true, requirements: [] };
+    if (!libraryPolicies) return undefined;
+    const chosen = new Set(state.policyBindings.map((b) => b.policyId));
+    const chosenPolicies = libraryPolicies.filter((p) => chosen.has(p.id) && (!p.status || p.status === "active"));
+    return checkPolicyRequirements(state.industryId, policyRequirementsFor(state.industryId), chosenPolicies, state.riskTier);
+  }, [state.industryId, state.riskTier, state.policyBindings, libraryPolicies]);
 
   const hasMissingPolicies = designTimeCheck && !designTimeCheck.passed;
   const missingCount = designTimeCheck?.requirements.filter(r => r.status === "missing").length || 0;
@@ -6289,9 +6402,10 @@ function StepReview({
                 <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div className="flex flex-col gap-1">
                   <span className="font-medium text-amber-700 dark:text-amber-300">
-                    {missingCount} required {missingCount === 1 ? "policy is" : "policies are"} missing for {industryLabel || state.industryId}
+                    {missingCount} required {missingCount === 1 ? "policy is" : "policies are"} not chosen for this agent ({industryLabel || state.industryId})
                   </span>
                   <span className="text-muted-foreground">
+                    Go back to Industry Governance: each one is listed under "Required for" with the policies that cover it.
                     Creating this agent without the required policies may violate compliance requirements.
                     Admin or compliance roles can override this gate.
                   </span>
@@ -6311,7 +6425,7 @@ function StepReview({
                   </span>
                   <Badge variant="outline" className="text-[9px]">{req.domain}</Badge>
                   <span className="text-muted-foreground ml-auto text-right truncate max-w-[200px]">
-                    {req.status === "satisfied" ? req.matchingPolicy : "No matching policy"}
+                    {req.status === "satisfied" ? req.matchingPolicy : "Not chosen"}
                   </span>
                 </div>
               ))}

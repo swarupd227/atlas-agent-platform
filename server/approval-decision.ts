@@ -17,6 +17,7 @@ import { workspaceRuns, type Approval } from "@shared/schema";
 import { applyMemoryDecision } from "./agent-memory";
 import { applySkillDecision } from "./agent-skill-proposals";
 import { applyOntologyDecision } from "./agent-ontology-proposals";
+import { POLICY_CHANGE_APPROVAL_TYPE, applyPolicyChangeDecision, selfApprovalRefusal } from "./agent-policy-changes";
 
 export type ApprovalDecision = "approved" | "rejected";
 
@@ -150,6 +151,11 @@ export function describeApprovalEffect(
       ? "The new screenshot becomes the baseline that later runs are compared with."
       : "The current baseline stays; the new screenshot is not adopted.";
   }
+  if (a.type === POLICY_CHANGE_APPROVAL_TYPE) {
+    return approve
+      ? "The agent's policies are removed or loosened as requested. Its next run follows the new set."
+      : "The agent keeps its policies exactly as they are. The request is kept as a record.";
+  }
   if (a.type === "guardrail_review") {
     return approve
       ? "The flags are acknowledged. The run has already finished; nothing about it changes."
@@ -209,6 +215,13 @@ export async function applyApprovalEffects(approval: Approval, status: string | 
   // joins THEIR organization's ontology (server/agent-ontology-proposals.ts).
   if (approval.type === "ontology_proposal" && approval.objectId && (status === "approved" || status === "rejected")) {
     await applyOntologyDecision({ orgId: approval.organizationId ?? ctx.orgId, proposalId: approval.objectId, decision: status, decidedBy });
+  }
+
+  // A policy_binding_change approval is a person deciding whether an agent's
+  // policies are removed or loosened (server/agent-policy-changes.ts). Nothing
+  // looser takes effect until this runs with "approved".
+  if (approval.type === POLICY_CHANGE_APPROVAL_TYPE && (status === "approved" || status === "rejected")) {
+    await applyPolicyChangeDecision(approval, status, decidedBy, approval.organizationId ?? ctx.orgId);
   }
 
   // Fast path for a DAG approval-gate decision: resume the paused run right
@@ -612,6 +625,9 @@ export async function decideApproval(input: DecideApprovalInput) {
   // A gate whose run has already finished cannot be rescued by deciding it.
   const moot = await gateDecisionMootReason(approval);
   if (moot) throw new ApprovalDecisionError(moot, "not_pending");
+  // Loosening an agent's policies takes two people.
+  const selfDecided = selfApprovalRefusal(approval, { label: input.decidedBy, userId: input.userId });
+  if (selfDecided) throw new ApprovalDecisionError(selfDecided, "not_allowed");
 
   // The same follow-up the Approvals page creates: a pending task on the same object, linked back.
   let followUpTaskId: string | null = null;

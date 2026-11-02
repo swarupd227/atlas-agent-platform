@@ -34,6 +34,7 @@ import {
 import { RemovalPlanError, planAgentRemoval } from "../removal-plans";
 import { TeamRemovalError, deleteEvalSuitesFor, deleteTeam, retireDeploymentsFor } from "../team-removal";
 import { getOrgId, getDefaultOrgId } from "../auth";
+import { POLICY_CHANGE_APPROVAL_TYPE, PolicyChangeError, refusalForBindingPatch, requestPolicyChanges, type PolicyBinding } from "../agent-policy-changes";
 import { assessConnectorLinkWarnings, connectorLinkAuditEvent } from "../connector-link";
 import { resolveRequestOrgId, filterEvalSuitesForOrg, filterEvalRunsForOrg } from "../tenant-scope";
 import { buildBlastRadius } from "../blast-radius";
@@ -665,12 +666,50 @@ const router = Router();
     }
   });
 
+  // Change an agent's chosen policies after creation (server/agent-policy-changes.ts):
+  // adding or tightening applies now; removing or loosening needs a reason and an
+  // approval from compliance_security (or admin), decided by someone else.
+  router.post("/api/agents/:id/policy-changes", checkPermission("create_modify_blueprints"), async (req: Request<{ id: string }>, res: Response) => {
+    try {
+      const { changes, reason } = req.body ?? {};
+      const result = await requestPolicyChanges({
+        orgId: getOrgId(req),
+        agentId: req.params.id,
+        changes,
+        reason: typeof reason === "string" ? reason : undefined,
+        actor: { label: getRequestActorLabel(req), userId: (req as any).authUser?.userId ?? null },
+      });
+      res.json(result);
+    } catch (e) {
+      if (e instanceof PolicyChangeError) {
+        return res.status(e.code === "not_found" ? 404 : 400).json({ message: e.message, code: e.code });
+      }
+      console.error(`[agents] policy change for ${req.params.id} failed:`, e);
+      res.status(500).json({ message: "Failed to change the agent's policies" });
+    }
+  });
+
+  // The agent's policy changes waiting for a decision.
+  router.get("/api/agents/:id/policy-changes", async (req: Request<{ id: string }>, res: Response) => {
+    const approvals = await storage.getApprovals(getOrgId(req));
+    res.json(approvals.filter((a) => a.type === POLICY_CHANGE_APPROVAL_TYPE && a.objectId === req.params.id && a.status === "pending"));
+  });
+
   router.patch("/api/agents/:id", checkPermission("create_modify_blueprints"), async (req: Request<{ id: string }>, res: Response) => {
     try {
       const existing = await storage.getAgent(req.params.id, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Agent not found" });
 
       const patch = updateAgentSchema.parse(req.body);
+      // A whole-list edit may add or tighten policies, never remove or loosen them:
+      // that needs a reason and an approval (POST /api/agents/:id/policy-changes).
+      if (patch.policyBindings !== undefined) {
+        const refusal = refusalForBindingPatch(
+          (Array.isArray(existing.policyBindings) ? existing.policyBindings : []) as PolicyBinding[],
+          (Array.isArray(patch.policyBindings) ? patch.policyBindings : []) as PolicyBinding[],
+        );
+        if (refusal) return res.status(409).json({ message: refusal });
+      }
       const updated = await storage.updateAgent(req.params.id, patch, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Agent not found" });
 

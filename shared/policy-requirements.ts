@@ -66,6 +66,21 @@ export interface PolicyCheckResult {
   requirements: Array<{ domain: string; regulation: string; description: string; status: "satisfied" | "missing"; matchingPolicy?: string; severity: "critical" | "warning" }>;
 }
 
+/**
+ * Does a policy meet a requirement? Same domain, and either the pack policy it
+ * names or the regulation's name in the policy's name or description. Shared by
+ * the design-time check and the wizard's policy recommendations.
+ */
+export function policyMeetsRequirement(
+  p: { name: string | null; description: string | null; domain: string | null },
+  r: PolicyRequirement,
+): boolean {
+  if (p.domain !== r.domain) return false;
+  if (r.policyName && (p.name || "").toLowerCase() === r.policyName.toLowerCase()) return true;
+  const regulationLower = r.regulation.toLowerCase().split("/")[0];
+  return (p.name || "").toLowerCase().includes(regulationLower) || (p.description || "").toLowerCase().includes(regulationLower);
+}
+
 export function checkPolicyRequirements(
   industryId: string,
   requirements: PolicyRequirement[],
@@ -77,12 +92,7 @@ export function checkPolicyRequirements(
   }
   const isHighRisk = riskTier === "HIGH" || riskTier === "CRITICAL";
   const results = requirements.map((r) => {
-    const regulationLower = r.regulation.toLowerCase().split("/")[0];
-    const matchingPolicy = activePolicies.find((p) => {
-      if (p.domain !== r.domain) return false;
-      if (r.policyName && (p.name || "").toLowerCase() === r.policyName.toLowerCase()) return true;
-      return (p.name || "").toLowerCase().includes(regulationLower) || (p.description || "").toLowerCase().includes(regulationLower);
-    });
+    const matchingPolicy = activePolicies.find((p) => policyMeetsRequirement(p, r));
     return {
       domain: r.domain,
       regulation: r.regulation,

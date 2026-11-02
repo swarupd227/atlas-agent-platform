@@ -4,9 +4,9 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "dev": "NODE_ENV=development tsx server/index.ts",
+    "dev": "cross-env NODE_ENV=development tsx --env-file=.env server/index.ts",
     "build": "tsx script/build.ts",
-    "start": "NODE_ENV=production node dist/index.cjs",
+    "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "lint:a11y": "eslint \"client/src/**/*.tsx\""
@@ -66,6 +66,7 @@
     "compression": "^1.8.2",
     "connect-pg-simple": "^10.0.0",
     "cookie-parser": "^1.4.7",
+    "cross-env": "^10.1.0",
     "d3-force": "^3.0.0",
     "date-fns": "^3.6.0",
     "dompurify": "^3.4.5",

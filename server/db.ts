@@ -2024,6 +2024,13 @@ export async function runStartupMigrations() {
       ALTER TABLE agents ADD COLUMN IF NOT EXISTS sub_vertical TEXT;
     `);
 
+    // How an agent's policies are chosen (agents.policy_selection, see
+    // shared/schema.ts). NULL keeps every existing agent on automatic
+    // organization policies; the wizard writes "explicit" for new agents.
+    await client.query(`
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS policy_selection TEXT;
+    `);
+
     // Connector Library: which of the three connector on-ramps (native hardcoded, real MCP,
     // OpenAPI-imported) a marketplace catalog row represents, plus the OpenAPI-only fields.
     // See server/marketplace-seed-data.ts and shared/schema.ts's marketplaceServers table.

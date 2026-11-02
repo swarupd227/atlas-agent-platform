@@ -6,6 +6,7 @@ import { db } from "../db";
 import { resumeTeamAgentDagRun } from "../dag-execution-engine";
 import { resumeWorkspaceRun } from "../workspace-run";
 import { applyApprovalEffects, gateDecisionMootReason } from "../approval-decision";
+import { selfApprovalRefusal } from "../agent-policy-changes";
 import { bindPolicyToOutcome } from "../policy-actions";
 import { promoteToBaseline } from "../services/screenshot-baseline";
 import { desc, eq, and, inArray, sql } from "drizzle-orm";
@@ -1286,6 +1287,11 @@ Ontology: ${ontologyName || "industry standard"}`,
     // The real signed-in user (production) or the active demo role (demo mode) -- never a client-supplied
     // "decidedBy" string, which any caller could set to whatever text it likes.
     const decidedBy = getRequestActorLabel(req);
+    // Loosening an agent's policies takes two people (server/agent-policy-changes.ts).
+    if (status === "approved" || status === "rejected") {
+      const selfDecided = selfApprovalRefusal(approval, { label: decidedBy, userId: (req as any).authUser?.userId });
+      if (selfDecided) return res.status(403).json({ message: selfDecided });
+    }
     const updateData: any = { decidedAt: new Date() };
     if (status) updateData.status = status;
     if (status) updateData.decidedBy = decidedBy;

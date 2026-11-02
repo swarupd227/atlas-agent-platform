@@ -213,6 +213,15 @@ export const agents = pgTable("agents", {
   /** The agent's industry (defaults to its organization's when it is created). */
   industryId: text("industry_id"),
   subVertical: text("sub_vertical"),
+  /**
+   * How this agent's policies are chosen (resolvePolicyBundle in server/routes/helpers.ts).
+   *   null        organization, outcome and environment policies attach automatically,
+   *               plus the agent's bindings (every agent created before 2026-10-30)
+   *   "explicit"  only the policies chosen for it: its policyBindings and policies
+   *               scoped to this agent. Set by the agent wizard, which recommends
+   *               policies and attaches none by default.
+   */
+  policySelection: text("policy_selection"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -248,6 +257,9 @@ export const updateAgentSchema = insertAgentSchema
     maturityScore: true,
     maturityFactors: true,
     lastIncidentAt: true,
+    // Set once, when the agent is created: an edit must not switch an existing
+    // agent to "explicit" and so quietly drop its organization policies.
+    policySelection: true,
   })
   .partial();
 

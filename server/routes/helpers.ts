@@ -1327,7 +1327,12 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   // industry. A policy WITHOUT the field applies everywhere exactly as before,
   // so existing policies are untouched. Agents have no industry column, so an
   // agent's industry is derived from the concepts its ontologyTags point at.
-  const allOrgPolicies = activePolicies.filter(p => p.scopeType === "org");
+  //
+  // An agent whose policies were chosen explicitly (policySelection "explicit",
+  // which the agent wizard writes) gets no organization, outcome or environment
+  // policy by default: only its bindings and policies scoped to it, below.
+  const explicitOnly = (agent as any)?.policySelection === "explicit";
+  const allOrgPolicies = explicitOnly ? [] : activePolicies.filter(p => p.scopeType === "org");
   const industryScoped = allOrgPolicies.filter(p => typeof (p.policyJson as any)?.industry === "string");
   let orgPolicies = allOrgPolicies;
   if (industryScoped.length > 0) {
@@ -1348,11 +1353,11 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
       return ind === agentIndustry;
     });
   }
-  const outcomePolicies = agent?.outcomeId
+  const outcomePolicies = agent?.outcomeId && !explicitOnly
     ? activePolicies.filter(p => p.scopeType === "outcome" && p.scopeId === agent.outcomeId)
     : [];
   const agentPolicies = activePolicies.filter(p => p.scopeType === "agent" && p.scopeId === agentId);
-  const envPolicies = agent?.environment
+  const envPolicies = agent?.environment && !explicitOnly
     ? activePolicies.filter(p => p.scopeType === "env" && p.scopeId === agent.environment)
     : [];
 
