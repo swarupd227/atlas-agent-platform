@@ -59,7 +59,7 @@ if jq -e '
   .[0].Principal.Federated == "arn:aws:iam::964604400233:oidc-provider/token.actions.githubusercontent.com" and
   .[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" and
   .[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
-    "repo:swarupd227/atlas-agent-platform:ref:refs/heads/main"
+    "repo:Nous-Github-Ent/astra-agent-platform:ref:refs/heads/main"
 ' "$trust" >/dev/null; then
   pass 'trust is restricted to the repository main ref and STS audience'
 else

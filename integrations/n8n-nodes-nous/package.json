@@ -9,7 +9,7 @@
     "orchestration"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/swarupd227/atlas-agent-platform",
+  "homepage": "https://github.com/Nous-Github-Ent/astra-agent-platform",
   "author": "Artizent",
   "engines": {
     "node": ">=18.10"

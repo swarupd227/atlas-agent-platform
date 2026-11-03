@@ -14,14 +14,14 @@ the right one). It does **not** already have this repo, though — Cloud Shell
 has no automatic link to GitHub, so the first step is always a clone:
 
 ```bash
-# Public repo — this just works:
-git clone https://github.com/swarupd227/atlas-agent-platform.git
-cd atlas-agent-platform
+# The repo is private: an anonymous clone fails. With git credentials already configured:
+git clone https://github.com/Nous-Github-Ent/astra-agent-platform.git
+cd astra-agent-platform
 
 # Private repo — authenticate first, then clone:
 gh auth login          # interactive device-code flow; Cloud Shell has gh preinstalled
-gh repo clone swarupd227/atlas-agent-platform
-cd atlas-agent-platform
+gh repo clone Nous-Github-Ent/astra-agent-platform
+cd astra-agent-platform
 ```
 
 Cloud Shell's `$HOME` persists between sessions (backed by an Azure File
@@ -55,12 +55,12 @@ cp config.env.example config.env   # fill in your values
 
 ## Recovering after losing local state
 
-Cloud Shell's `$HOME` normally persists, but if a session ever comes up with no `atlas-agent-platform` directory at all (not just a stale working directory — the whole clone is gone), **do not just re-clone and run `provision.sh`**. Its secrets step only generates fresh values when `.generated-secrets.env` is missing, and a freshly generated `DB_PASSWORD`/`JWT_SECRET`/etc. won't match what's actually on the live Postgres server or already-issued sessions — pushing those as app settings breaks the working deployment. Instead:
+Cloud Shell's `$HOME` normally persists, but if a session ever comes up with no `astra-agent-platform` directory at all (not just a stale working directory — the whole clone is gone), **do not just re-clone and run `provision.sh`**. Its secrets step only generates fresh values when `.generated-secrets.env` is missing, and a freshly generated `DB_PASSWORD`/`JWT_SECRET`/etc. won't match what's actually on the live Postgres server or already-issued sessions — pushing those as app settings breaks the working deployment. Instead:
 
 ```bash
 cd ~
-git clone https://github.com/swarupd227/atlas-agent-platform.git
-cd atlas-agent-platform/deploy/azure
+git clone https://github.com/Nous-Github-Ent/astra-agent-platform.git
+cd astra-agent-platform/deploy/azure
 ./recover-secrets.sh <resource-group> <app-name>
 ```
 

@@ -26,7 +26,7 @@ In plain language: the public back door is closed, WAF is active, and production
 - Bash, AWS CLI v2, Azure CLI, Git, GitHub CLI, `jq`, `curl`, and `openssl`.
 - AWS account `964604400233` in `us-east-1`.
 - An authenticated AWS profile and Azure session. Authentication is deliberately outside the scripts.
-- GitHub collaborator access to `swarupd227/atlas-agent-platform`.
+- GitHub collaborator access to `Nous-Github-Ent/astra-agent-platform`.
 - For a fresh migration, Azure PostgreSQL must accept the printed AWS NAT public IP before Phase 7 runs.
 
 ```bash
@@ -77,7 +77,7 @@ Resolve the latest `main` commit and its immutable digest. Both checks must succ
 
 ```bash
 export COMMIT_SHA
-COMMIT_SHA=$(git ls-remote https://github.com/swarupd227/atlas-agent-platform.git \
+COMMIT_SHA=$(git ls-remote https://github.com/Nous-Github-Ent/astra-agent-platform.git \
   refs/heads/main | awk 'NR == 1 {print $1}')
 [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
 
