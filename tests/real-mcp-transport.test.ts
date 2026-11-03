@@ -17,12 +17,14 @@ vi.mock("../server/storage", () => ({
   storage: {
     getAgentMcpServers: vi.fn(),
     getMcpServer: vi.fn(),
+    createAuditEvent: vi.fn(),
   },
 }));
 vi.mock("../server/routes/helpers", () => ({ resolvePolicyBundle: vi.fn() }));
 vi.mock("../server/tool-dispatcher", () => ({ dispatchToolCall: vi.fn() }));
 
-import { resolveAgentConnectorServer, callConnectorToolGoverned, toMcpToolResult } from "../server/real-mcp-transport";
+import { resolveAgentConnectorServer, callConnectorToolGoverned, toMcpToolResult, createMcpProtocolRouter } from "../server/real-mcp-transport";
+import { RealMcpBase } from "../server/real-mcp-base";
 import { storage } from "../server/storage";
 import { resolvePolicyBundle } from "../server/routes/helpers";
 import { dispatchToolCall } from "../server/tool-dispatcher";
@@ -154,6 +156,51 @@ describe("toMcpToolResult", () => {
   it("names the outcome when a refusal carries no text", () => {
     const r = toMcpToolResult({ outcome: "rate_limited", ok: false, result: null, redactedArgs: {}, startedAt: "", completedAt: "", durationMs: 0 });
     expect(r).toEqual({ content: [{ type: "text", text: "Tool call refused (rate_limited)." }], isError: true });
+  });
+});
+
+describe("the /mcp route", () => {
+  const handlerFor = (method: "get" | "delete") => {
+    const router = createMcpProtocolRouter({ tools: [] } as any, "probe") as any;
+    const layer = router.stack.find((l: any) => l.route?.path === "/mcp" && l.route.methods[method]);
+    return layer?.route.stack[0].handle;
+  };
+
+  it.each(["get", "delete"] as const)("answers %s with 405 and says POST is what it takes", (method) => {
+    const res: any = { headers: {} as Record<string, string> };
+    res.status = vi.fn(() => res);
+    res.set = vi.fn((k: string, v: string) => { res.headers[k] = v; return res; });
+    res.json = vi.fn(() => res);
+    const handle = handlerFor(method);
+    expect(handle, `no ${method} handler on /mcp`).toBeTypeOf("function");
+    handle({}, res);
+    expect(res.status).toHaveBeenCalledWith(405);
+    expect(res.headers.Allow).toBe("POST");
+    expect(res.json.mock.calls[0][0]).toMatchObject({ jsonrpc: "2.0", id: null });
+  });
+});
+
+describe("the connector's audit event", () => {
+  class Probe extends RealMcpBase {
+    readonly integrationId = "probe";
+    readonly tools = [{ name: "ping", description: "", inputSchema: {} }];
+    async handleTool() { return { content: [{ type: "text" as const, text: "ok" }] }; }
+    protected async lookupCredentials() { return { credentials: {} }; }
+  }
+  const audit = storage.createAuditEvent as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => audit.mockReset().mockResolvedValue({}));
+
+  it("names the agent that made the call", async () => {
+    await new Probe().callTool("ping", {}, ORG, "agent-1");
+    expect(audit.mock.calls[0][0]).toMatchObject({ actorType: "agent", actorId: "agent-1", action: "integration_tool_call" });
+  });
+
+  it("names the agent on a failed call too", async () => {
+    const probe = new Probe();
+    probe.handleTool = async () => ({ content: [{ type: "text" as const, text: "no" }], isError: true });
+    await probe.callTool("ping", {}, ORG, "agent-1");
+    expect(audit.mock.calls[0][0]).toMatchObject({ actorId: "agent-1", action: "integration_tool_error" });
   });
 });
 

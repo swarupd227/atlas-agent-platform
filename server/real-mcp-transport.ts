@@ -196,5 +196,18 @@ export function createMcpProtocolRouter(base: RealMcpBase, integrationId: string
     }
   });
 
+  // Stateless: there is no server stream to open and no session to end. The
+  // protocol has a client try GET and DELETE and expects 405 from a server that
+  // offers neither; the API's 404 would read as a lost session.
+  const notOffered = (_req: Request, res: Response) => {
+    res.status(405).set("Allow", "POST").json({
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Method not allowed." },
+      id: null,
+    });
+  };
+  router.get("/mcp", notOffered);
+  router.delete("/mcp", notOffered);
+
   return router;
 }

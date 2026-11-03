@@ -231,6 +231,7 @@ export abstract class RealMcpBase {
     const maskedArgs = maskAuditArgs(args);
     storage.createAuditEvent({
       actorType: "agent",
+      actorId: agentId,
       action: result.isError ? "integration_tool_error" : "integration_tool_call",
       objectType: "integration",
       objectId: `${this.integrationId}:${toolName}`,
