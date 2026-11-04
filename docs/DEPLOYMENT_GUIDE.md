@@ -74,7 +74,7 @@ file (or as environment variables for secrets). The most important ones:
 
 | Config item | Variable | Notes |
 |---|---|---|
-| **GitHub repo link** | `github_repo_url` | Where the app code lives; used by the deploy step. Default: `https://github.com/Nous-Github-Ent/astra-agent-platform`. |
+| **GitHub repo link** | `github_repo_url` | Where the app code lives; used by the deploy step. Default: `https://github.com/swarupd227/atlas-agent-platform`. |
 | Git branch | `github_branch` | Default `main`. |
 | **LLM API key (Anthropic)** | `anthropic_api_key` | **Secret.** Set via `TF_VAR_anthropic_api_key`, not in a committed file. |
 | **LLM API key (OpenAI)** | `openai_api_key` | **Secret**, optional (embeddings/fallback). |
@@ -125,8 +125,8 @@ all of them pre-installed** — it is the easiest place to run the Azure module.
 ### 5.1 Get the code and pick your variables
 
 ```bash
-git clone https://github.com/Nous-Github-Ent/astra-agent-platform.git
-cd astra-agent-platform/deploy/terraform/azure
+git clone https://github.com/swarupd227/atlas-agent-platform.git
+cd atlas-agent-platform/deploy/terraform/azure
 cp terraform.tfvars.example terraform.tfvars
 ```
 
@@ -229,7 +229,7 @@ terraform output -raw public_api_key
 The steps mirror Azure; only the tooling differs.
 
 ```bash
-cd astra-agent-platform/deploy/terraform/aws
+cd atlas-agent-platform/deploy/terraform/aws
 cp terraform.tfvars.example terraform.tfvars   # edit region, names, sizes
 export TF_VAR_anthropic_api_key="sk-ant-..."
 terraform init && terraform apply

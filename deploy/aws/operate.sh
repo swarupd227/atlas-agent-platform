@@ -8,7 +8,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/common.sh"
 
 EXPECTED_ACCOUNT_ID=${EXPECTED_ACCOUNT_ID:-964604400233}
-GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-Nous-Github-Ent/astra-agent-platform}
+GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-swarupd227/atlas-agent-platform}
 GITHUB_DEPLOY_ROLE=${GITHUB_DEPLOY_ROLE:-astra-agents-github-ecr-push}
 GITHUB_OIDC_PROVIDER=${GITHUB_OIDC_PROVIDER:-token.actions.githubusercontent.com}
 CURL_BIN=${CURL_BIN:-curl}

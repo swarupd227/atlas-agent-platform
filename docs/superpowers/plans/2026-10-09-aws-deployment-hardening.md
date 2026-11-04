@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - AWS account `964604400233`, default region `us-east-1`.
-- Repository `Nous-Github-Ent/astra-agent-platform`; Azure files and resources are read-only and unchanged.
+- Repository `swarupd227/atlas-agent-platform`; Azure files and resources are read-only and unchanged.
 - `DEPLOYMENT_ID` matches `[a-z0-9][a-z0-9-]{0,11}` and every lookup must resolve exactly one deployment-scoped resource.
 - DNS/custom TLS, Bedrock, SSO, admin passwords, vault keys, and audit signing keys are out of scope.
 - Deployments are manually initiated and images are selected by immutable digest.

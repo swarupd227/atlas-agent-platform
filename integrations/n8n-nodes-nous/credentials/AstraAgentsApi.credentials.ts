@@ -7,7 +7,7 @@ import type {
 export class AstraAgentsApi implements ICredentialType {
   name = 'astraAgentsApi';
   displayName = 'Astra Agents API';
-  documentationUrl = 'https://github.com/Nous-Github-Ent/astra-agent-platform/tree/main/integrations/n8n';
+  documentationUrl = 'https://github.com/swarupd227/atlas-agent-platform/tree/main/integrations/n8n';
   properties: INodeProperties[] = [
     {
       displayName: 'Base URL',

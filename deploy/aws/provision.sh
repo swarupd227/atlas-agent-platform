@@ -36,7 +36,7 @@ if [[ "$ACCOUNT_ID" != 964604400233 ]]; then
   exit 1
 fi
 
-export REPOSITORY_URL=https://github.com/Nous-Github-Ent/astra-agent-platform.git
+export REPOSITORY_URL=https://github.com/swarupd227/atlas-agent-platform.git
 export AZURE_RESOURCE_GROUP=astra-agents-rg
 export AZURE_WEBAPP=astra-agents-artizent
 
