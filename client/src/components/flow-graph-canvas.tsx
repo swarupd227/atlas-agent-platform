@@ -68,6 +68,12 @@ export const PALETTE_TYPES: ProcessNodeType[] = [
   "expert_approval", "take_action", "send_notification", "parallel", "loop", "n8n", "sub_flow", "expression", "end",
 ];
 
+// Steps the inspector lets name one tool to call directly (and repeat per item).
+// The server compiles any step with a tool to a direct call whatever its type, so
+// a type missing here still runs its tool -- the inspector just hides it: a Get
+// Info lookup ("screen each party") showed neither its tool nor its list.
+export const TOOL_STEP_TYPES: ReadonlySet<ProcessNodeType> = new Set<ProcessNodeType>(["get_info", "take_action", "send_notification"]);
+
 // The step rail, grouped by what a step is for.
 const PALETTE_GROUPS: Array<{ label: string; types: ProcessNodeType[] }> = [
   { label: "Flow", types: ["trigger", "end"] },
@@ -1198,7 +1204,7 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                     </span>
                   </label>
                 )}
-                {(d.ntype === "take_action" || d.ntype === "send_notification") && (
+                {TOOL_STEP_TYPES.has(d.ntype) && (
                   <div className="flex flex-col gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2">
                     <label className="text-[10px] text-emerald-700 dark:text-emerald-400 uppercase tracking-wide font-medium">Calls one tool directly</label>
                     <ToolPicker
