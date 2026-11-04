@@ -987,6 +987,11 @@ export async function recordRunDecisions(input: {
     rationale = null;
   }
 
+  // Every record gets a shelf life. A later decision on the same object
+  // renews it, which is right: the object was looked at again.
+  const ttlDays = await precedentTtlDays();
+  const expiresAt = precedentExpiry(input.decidedAt, ttlDays);
+
   let written = 0;
   for (const subject of subjects) {
     try {
@@ -1003,6 +1008,7 @@ export async function recordRunDecisions(input: {
         reviewState,
         decidedBy: input.teamName || input.teamAgentId,
         effectiveFrom: input.decidedAt,
+        expiresAt,
         contextUsed,
         controlsApplied,
         rationale,
@@ -1066,6 +1072,58 @@ export async function intelligenceContextEnabled(): Promise<boolean> {
  * Off unless explicitly turned on, and a failed read is off.
  */
 export const RECALL_REQUIRE_REVIEW_SETTING = "INTELLIGENCE_RECALL_REQUIRE_REVIEW";
+
+/**
+ * How long a recorded decision is offered as current precedent.
+ *
+ * The recall gate has refused an expired record since this layer existed, and
+ * the API has filtered on `lifecycle=expired` just as long -- but NOTHING ever
+ * set `expiresAt`, so neither ever fired. Measured 2026-10-27: 0 of 183 records
+ * carried an expiry, 0 were superseded, and on 2026-11-04 a record written
+ * minutes earlier was handed to the next run as `tier=authoritative` with
+ * `expiresAt=null`. That is "we approved this last time" hardening into policy,
+ * which is the failure the requirement names.
+ *
+ * It is a SETTING because the platform cannot know a business's review cycle,
+ * and the default is a stated default rather than a derived number: one year,
+ * the least surprising span for an annual book of business. Per-subject-type
+ * shelf lives (a binder is not an agency appointment) are the obvious
+ * refinement and deliberately not invented here.
+ */
+export const PRECEDENT_TTL_SETTING = "INTELLIGENCE_PRECEDENT_TTL_DAYS";
+export const PRECEDENT_TTL_DAYS_DEFAULT = 365;
+const PRECEDENT_TTL_DAYS_MAX = 3650;
+
+/**
+ * The configured shelf life in days, or the default.
+ *
+ * A value that is not PLAIN DIGITS in 1..3650 is ignored rather than
+ * clamped: a typo should not quietly become a policy nobody chose. Out-of-range
+ * and unreadable both fall back to the default, and the default is never zero --
+ * an expiry of "now" would withhold every record the moment it was written.
+ */
+export async function precedentTtlDays(): Promise<number> {
+  try {
+    const row = await (storage as { getPlatformSetting?: (key: string) => Promise<{ value?: string | null } | undefined> })
+      .getPlatformSetting?.(PRECEDENT_TTL_SETTING);
+    // Plain digits only. Number() would accept "1e3" as 1000 and "0x10" as
+    // 16, which is a surprising amount of policy to grant a typo in an
+    // operator-facing field; a whole number of days should look like one.
+    const raw = String(row?.value ?? "").trim();
+    if (/^\d{1,4}$/.test(raw)) {
+      const n = Number(raw);
+      if (n >= 1 && n <= PRECEDENT_TTL_DAYS_MAX) return n;
+    }
+  } catch { /* unreadable is the default, never an accidental zero */ }
+  return PRECEDENT_TTL_DAYS_DEFAULT;
+}
+
+/** When a decision taken at `decidedAt` stops being offered as current. */
+export function precedentExpiry(decidedAt: Date | string, ttlDays: number): Date {
+  const from = decidedAt instanceof Date ? decidedAt : new Date(decidedAt);
+  const base = Number.isFinite(from.getTime()) ? from.getTime() : Date.now();
+  return new Date(base + ttlDays * 24 * 60 * 60 * 1000);
+}
 
 async function settingIsOn(key: string): Promise<boolean> {
   try {

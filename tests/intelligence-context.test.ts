@@ -85,7 +85,7 @@ vi.mock("../server/storage", () => ({
     upsertDecisionRecord,
   },
 }));
-const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions, recallVerdict, resolveOutcomeFor } = await import("../server/intelligence-context");
+const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions, recallVerdict, resolveOutcomeFor, precedentTtlDays, precedentExpiry, PRECEDENT_TTL_DAYS_DEFAULT, PRECEDENT_TTL_SETTING } = await import("../server/intelligence-context");
 
 // Verbatim shape from the live run.
 const LIVE_STATE = {
@@ -1944,5 +1944,73 @@ describe("a declared run subject", () => {
     // BOTH entry points, or the anchor works from one route and silently not
     // from the other.
     expect((engine.match(/setupTeamAgentDagRun\(teamAgentId, blueprintId, request, opts\?\.input, opts\?\.subjects\)/g) ?? []).length).toBe(2);
+  });
+});
+
+/**
+ * R3 of the Intelligence Context requirements: stored precedent must expire or
+ * be re-reviewed, "or we approved this last time ossifies into policy".
+ *
+ * The recall gate has refused an expired record since this layer existed and
+ * the API has filtered on lifecycle=expired just as long, but nothing ever set
+ * expiresAt -- 0 of 183 records carried one (2026-10-27), and on 2026-11-04 a
+ * record written minutes earlier was handed to the next run as authoritative
+ * with no expiry at all. Both halves existed; the write did not.
+ */
+describe("precedent has a shelf life", () => {
+  beforeEach(() => { settingValue = "on"; settings = {}; });
+
+  it("defaults to a stated default, not to forever and not to zero", async () => {
+    settings = {};
+    expect(await precedentTtlDays()).toBe(PRECEDENT_TTL_DAYS_DEFAULT);
+    // Zero would withhold every record the moment it was written.
+    expect(PRECEDENT_TTL_DAYS_DEFAULT).toBeGreaterThan(0);
+  });
+
+  it("takes the operator's value when it is a whole number of days in range", async () => {
+    for (const v of ["30", "1", "3650", " 90 "]) {
+      settings = { [PRECEDENT_TTL_SETTING]: v };
+      expect(await precedentTtlDays(), v).toBe(Number(String(v).trim()));
+    }
+    expect(getPlatformSetting).toHaveBeenCalledWith(PRECEDENT_TTL_SETTING);
+  });
+
+  it("ignores a value that is not one, rather than clamping it into a policy nobody chose", async () => {
+    for (const v of ["0", "-5", "3651", "abc", "", "30.5", "1e3"]) {
+      settings = { [PRECEDENT_TTL_SETTING]: v };
+      expect(await precedentTtlDays(), JSON.stringify(v)).toBe(PRECEDENT_TTL_DAYS_DEFAULT);
+    }
+    getPlatformSetting.mockRejectedValueOnce(new Error("db down"));
+    expect(await precedentTtlDays()).toBe(PRECEDENT_TTL_DAYS_DEFAULT);
+  });
+
+  it("expires a decision a shelf life after it was TAKEN, not after it was written", () => {
+    // decidedAt, because a run that finishes late must not buy extra months of
+    // authority for a judgement made earlier.
+    const decidedAt = new Date("2026-03-01T00:00:00.000Z");
+    expect(precedentExpiry(decidedAt, 30).toISOString()).toBe("2026-03-31T00:00:00.000Z");
+    expect(precedentExpiry("2026-03-01T00:00:00.000Z", 365).toISOString()).toBe("2027-03-01T00:00:00.000Z");
+  });
+
+  it("still produces an expiry when decidedAt is unusable", () => {
+    // A record with no expiry is the state this increment exists to remove, so
+    // a bad timestamp must not be a way back into it.
+    const e = precedentExpiry("not a date", 10);
+    expect(Number.isFinite(e.getTime())).toBe(true);
+    expect(e.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("sets it on every record the write path creates", async () => {
+    const src = readFileSync(path.join(__dirname, "..", "server", "intelligence-context.ts"), "utf8");
+    expect(src).toContain("const ttlDays = await precedentTtlDays();");
+    expect(src).toContain("const expiresAt = precedentExpiry(input.decidedAt, ttlDays);");
+    // On the upsert itself, or the shelf life is computed and never stored.
+    // Compared by position rather than one multi-line regex: what matters is
+    // that expiresAt is passed with the other record fields.
+    const atEffective = src.indexOf("effectiveFrom: input.decidedAt,");
+    const atExpiry = src.indexOf("expiresAt,", atEffective);
+    expect(atEffective, "the upsert field list moved").toBeGreaterThan(-1);
+    expect(atExpiry, "expiresAt is not passed to the upsert").toBeGreaterThan(atEffective);
+    expect(atExpiry - atEffective, "expiresAt is not in the same field list").toBeLessThan(120);
   });
 });
