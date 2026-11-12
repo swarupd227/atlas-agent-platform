@@ -1371,12 +1371,17 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   ].map(p => p.id));
   for (const binding of bindings) {
     if (!binding.policyId) continue;
-    if (alreadyScopedIds.has(binding.policyId)) continue; // already included via scope
     const policy = activePolicies.find(p => p.id === binding.policyId);
     if (!policy) continue;
     // Binding-level enforcement overrides the policy's own enforcement field when stricter.
     // "hard"/"strict"/"block" from the wizard means the user explicitly asked for a hard block.
     const bindingEnf = (binding.enforcement || "").toLowerCase();
+    if (alreadyScopedIds.has(binding.policyId)) {
+      const hard = new Set(["hard", "strict", "block", "hard_block"]);
+      const policyEnf = String((policy.policyJson as any)?.enforcement || (policy.policyJson as any)?.enforcement_mode || "monitor").toLowerCase();
+      if (hard.has(bindingEnf) && !hard.has(policyEnf)) (policy as any)._enforcementOverride = bindingEnf;
+      continue;
+    }
     (policy as any)._enforcementOverride = bindingEnf || undefined;
     bindingPolicies.push(policy as typeof bindingPolicies[number]);
   }

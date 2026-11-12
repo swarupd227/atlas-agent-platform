@@ -238,27 +238,6 @@ const router = Router();
         } catch (_) {}
       }
 
-      // Fix #5: Inherit outcome-scoped policies into policyBindings so bound governance applies at runtime
-      if (agent.outcomeId) {
-        try {
-          const outcomePolicies = await storage.getPoliciesByScope("outcome", agent.outcomeId);
-          if (outcomePolicies.length > 0) {
-            const existing = (agent.policyBindings as any) || {};
-            const existingNames: string[] = Array.isArray(existing.policies) ? existing.policies : [];
-            const newNames = outcomePolicies.map(p => p.name).filter(n => !existingNames.includes(n));
-            if (newNames.length > 0) {
-              await storage.updateAgent(agent.id, {
-                policyBindings: {
-                  ...existing,
-                  policies: [...existingNames, ...newNames],
-                  outcomeBindings: outcomePolicies.map(p => ({ policyId: p.id, policyName: p.name, domain: p.domain })),
-                },
-              });
-            }
-          }
-        } catch (_) {}
-      }
-
       const hasMemGovRules = Array.isArray(req.body.memoryGovernanceRules) && req.body.memoryGovernanceRules.length > 0;
       const hasRegulatedTags = Array.isArray(agent.complianceTags) && agent.complianceTags.some((t: string) => ["HIPAA", "PCI-DSS", "SOX", "GDPR", "BSA", "AML", "NAIC", "PCI"].includes(t.toUpperCase()));
       if (hasMemGovRules || hasRegulatedTags) {
